@@ -245,6 +245,13 @@ const Intake = (() => {
 
         if (isInIsolation) {
             data.status = 'isolated';
+        } else if (!state.editId) {
+            data.status = 'available';
+        } else {
+            const current = Store.getAnimal(state.editId);
+            if (current && (current.status === 'isolated' || current.status === 'available')) {
+                data.status = 'available';
+            }
         }
 
         if (state.editId) {

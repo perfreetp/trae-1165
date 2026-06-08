@@ -518,6 +518,7 @@ const Expense = (() => {
         Store.saveConfig(config);
         closeModal();
         render();
+        if (typeof App !== 'undefined') App.updateCapacity();
     }
 
     function closeModal() {

@@ -64,7 +64,7 @@ const Store = (() => {
             source: data.source || 'stray',
             sourceDetail: data.sourceDetail || '',
             intakeDate: data.intakeDate || new Date().toISOString().split('T')[0],
-            status: data.status || 'isolated',
+            status: data.status || (data.isolationStatus && !data.isolationStatus.isInIsolation ? 'available' : 'isolated'),
             photo: data.photo || '',
             characteristics: data.characteristics || '',
             isolationStatus: {
@@ -195,12 +195,14 @@ const Store = (() => {
 
     function getUpcomingReminders(days) {
         const records = load(KEYS.medical);
-        const now = new Date();
-        const future = new Date(now.getTime() + (days || 7) * 86400000);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const future = new Date(today.getTime() + (days || 7) * 86400000);
+        future.setHours(23, 59, 59, 999);
         return records.filter(r => {
             if (!r.nextDate) return false;
-            const d = new Date(r.nextDate);
-            return d >= now && d <= future;
+            const d = new Date(r.nextDate + 'T00:00:00');
+            return d >= today && d <= future;
         }).map(r => {
             const animal = getAnimal(r.animalId);
             return { ...r, animalName: animal ? animal.name : '未知' };
@@ -289,6 +291,15 @@ const Store = (() => {
 
     function deletePlacement(id) {
         save(KEYS.placements, load(KEYS.placements).filter(p => p.id !== id));
+    }
+
+    function updatePlacement(id, data) {
+        const placements = load(KEYS.placements);
+        const idx = placements.findIndex(p => p.id === id);
+        if (idx === -1) return null;
+        placements[idx] = { ...placements[idx], ...data };
+        save(KEYS.placements, placements);
+        return placements[idx];
     }
 
     function getPlacementsByAnimal(animalId) {
@@ -499,7 +510,7 @@ const Store = (() => {
         createAnimal, updateAnimal, deleteAnimal, getAnimal, getAllAnimals, searchAnimals, batchUpdateStatus, updateWeight,
         createMedical, updateMedical, deleteMedical, getMedicalByAnimal, getAllMedical, getUpcomingReminders,
         createFamily, updateFamily, deleteFamily, getFamily, getAllFamilies, matchAdopters,
-        createPlacement, deletePlacement, getPlacementsByAnimal, getAllPlacements,
+        createPlacement, updatePlacement, deletePlacement, getPlacementsByAnimal, getAllPlacements,
         createExpense, updateExpense, deleteExpense, getAllExpenses,
         createInventory, updateInventory, deleteInventory, getAllInventory,
         createFollowup, updateFollowup, deleteFollowup, getFollowupsByAnimal, getAllFollowups,

@@ -173,7 +173,11 @@ const Foster = (() => {
         const isEdit = !!placement;
         state.editPlacementId = id || null;
 
-        const animals = Store.getAllAnimals().filter(a => a.status === 'isolated' || a.status === 'available');
+        const animals = Store.getAllAnimals().filter(a => {
+            if (a.status === 'isolated' || a.status === 'available') return true;
+            if (isEdit && placement && a.id === placement.animalId) return true;
+            return false;
+        });
         const families = Store.getAllFamilies();
 
         const animalOptions = animals.map(a => {
@@ -248,10 +252,11 @@ const Foster = (() => {
         if (!animalId || !familyId) return;
 
         const typeEl = document.querySelector('input[name="fs-f-type"]:checked');
+        const type = typeEl ? typeEl.value : 'foster';
         const data = {
             animalId,
             familyId,
-            type: typeEl ? typeEl.value : 'foster',
+            type,
             startDate: document.getElementById('fs-f-start').value,
             endDate: document.getElementById('fs-f-end').value,
             agreementPrinted: document.getElementById('fs-f-agreement').checked,
@@ -259,9 +264,10 @@ const Foster = (() => {
         };
 
         if (state.editPlacementId) {
-            Store.deletePlacement(state.editPlacementId);
+            Store.updatePlacement(state.editPlacementId, data);
+        } else {
+            Store.createPlacement(data);
         }
-        Store.createPlacement(data);
         closeModal();
         render();
     }
@@ -487,10 +493,12 @@ const Foster = (() => {
                 </div>
             </div>`;
         document.body.appendChild(printDiv);
+        Store.updatePlacement(id, { agreementPrinted: true });
         window.print();
         setTimeout(() => {
             const el = document.querySelector('.print-area');
             if (el) el.remove();
+            render();
         }, 1000);
     }
 
