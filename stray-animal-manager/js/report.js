@@ -77,6 +77,13 @@ const Report = (() => {
         const totalExpense = data.expenses.filter(e => e.type === 'expense').reduce((s, e) => s + (e.amount || 0), 0);
         const balance = totalIncome - totalExpense;
 
+        const groups = Store.getGroupedReminders();
+        const todayCount = groups.today.length;
+        const tomorrowCount = groups.tomorrow.length;
+        const weekCount = groups.week.length;
+        const fortnightCount = groups.fortnight.length;
+        const totalReminders = todayCount + tomorrowCount + weekCount + fortnightCount;
+
         return `<div class="stat-cards">
             <div class="stat-card">
                 <div class="stat-icon blue">🐾</div>
@@ -111,6 +118,20 @@ const Report = (() => {
                 <div class="stat-info">
                     <div class="stat-value">${followupCount}</div>
                     <div class="stat-label">回访记录数</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon red">🔴</div>
+                <div class="stat-info">
+                    <div class="stat-value">${todayCount}</div>
+                    <div class="stat-label">今天到期提醒</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">🔔</div>
+                <div class="stat-info">
+                    <div class="stat-value">${totalReminders}</div>
+                    <div class="stat-label">14天内提醒总计</div>
                 </div>
             </div>
             <div class="stat-card">
@@ -233,6 +254,34 @@ const Report = (() => {
             </table></div>`;
     }
 
+    function renderRemindersTable() {
+        const groups = Store.getGroupedReminders();
+        const all = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
+        if (!all.length) return '';
+        const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+        const rows = all.map(r => {
+            const group = groups.today.includes(r) ? '今天到期' : groups.tomorrow.includes(r) ? '明天到期' : groups.week.includes(r) ? '7天内' : '14天内';
+            return `<tr>
+                <td>${r.animalName || '未知'}</td>
+                <td>${typeLabels[r.type] || r.type || '-'}</td>
+                <td>${r.description || '-'}</td>
+                <td>${r.nextDate || '-'}</td>
+                <td>${group}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="section-divider">近期提醒明细（14天内）</div>
+            <div class="stat-cards" style="margin-bottom:12px">
+                <div class="stat-card"><div class="stat-icon red">🔴</div><div class="stat-info"><div class="stat-value">${groups.today.length}</div><div class="stat-label">今天到期</div></div></div>
+                <div class="stat-card"><div class="stat-icon orange">🟠</div><div class="stat-info"><div class="stat-value">${groups.tomorrow.length}</div><div class="stat-label">明天到期</div></div></div>
+                <div class="stat-card"><div class="stat-icon blue">🔵</div><div class="stat-info"><div class="stat-value">${groups.week.length}</div><div class="stat-label">7天内</div></div></div>
+                <div class="stat-card"><div class="stat-icon green">🟢</div><div class="stat-info"><div class="stat-value">${groups.fortnight.length}</div><div class="stat-label">14天内</div></div></div>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th>动物名称</th><th>类型</th><th>描述</th><th>到期日期</th><th>分组</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    }
+
     function renderActionButtons() {
         return `<div style="margin-top:24px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" id="rp-print-btn">🖨️ 打印报表</button>
@@ -264,6 +313,7 @@ const Report = (() => {
             ${renderPlacementsTable()}
             ${renderExpenseBreakdown()}
             ${renderFollowupsTable()}
+            ${renderRemindersTable()}
             ${renderActionButtons()}`;
     }
 
@@ -425,6 +475,32 @@ const Report = (() => {
             html += `</tbody></table>`;
         }
 
+        const rGroups = Store.getGroupedReminders();
+        const allReminders = [...rGroups.today, ...rGroups.tomorrow, ...rGroups.week, ...rGroups.fortnight];
+        if (allReminders.length) {
+            const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+            html += `<h3 style="font-size:15px;margin:16px 0 8px">近期提醒明细（14天内）</h3>`;
+            html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px">
+                <thead><tr style="background:#f5f5f5">
+                    <th style="border:1px solid #ccc;padding:6px 8px">动物名称</th>
+                    <th style="border:1px solid #ccc;padding:6px 8px">类型</th>
+                    <th style="border:1px solid #ccc;padding:6px 8px">描述</th>
+                    <th style="border:1px solid #ccc;padding:6px 8px">到期日期</th>
+                    <th style="border:1px solid #ccc;padding:6px 8px">分组</th>
+                </tr></thead><tbody>`;
+            allReminders.forEach(r => {
+                const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '14天内';
+                html += `<tr>
+                    <td style="border:1px solid #ccc;padding:6px 8px">${r.animalName || '未知'}</td>
+                    <td style="border:1px solid #ccc;padding:6px 8px">${typeLabels[r.type] || r.type || '-'}</td>
+                    <td style="border:1px solid #ccc;padding:6px 8px">${r.description || '-'}</td>
+                    <td style="border:1px solid #ccc;padding:6px 8px">${r.nextDate || '-'}</td>
+                    <td style="border:1px solid #ccc;padding:6px 8px">${group}</td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+        }
+
         html += `</div>`;
         return html;
     }
@@ -523,6 +599,18 @@ const Report = (() => {
             data.followups.forEach(f => {
                 const animal = Store.getAnimal(f.animalId);
                 csv += [escapeCSV(animal ? animal.name : '未知'), escapeCSV(followupTypeMap[f.type] || f.type), escapeCSV(followupStatusMap[f.status] || f.status), escapeCSV(f.date), escapeCSV(f.notes)].join(',') + '\n';
+            });
+        }
+
+        const rGroups = Store.getGroupedReminders();
+        const allReminders = [...rGroups.today, ...rGroups.tomorrow, ...rGroups.week, ...rGroups.fortnight];
+        if (allReminders.length) {
+            const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+            csv += '\n近期提醒明细（14天内）\n';
+            csv += '动物名称,类型,描述,到期日期,分组\n';
+            allReminders.forEach(r => {
+                const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '14天内';
+                csv += [escapeCSV(r.animalName || '未知'), escapeCSV(typeLabels[r.type] || r.type), escapeCSV(r.description || ''), escapeCSV(r.nextDate), escapeCSV(group)].join(',') + '\n';
             });
         }
 

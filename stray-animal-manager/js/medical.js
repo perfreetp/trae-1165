@@ -28,9 +28,10 @@ const Medical = (() => {
         const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         const all = Store.getAllMedical();
         const monthRecords = all.filter(r => r.date && r.date.startsWith(prefix));
-        const reminders = Store.getUpcomingReminders(14);
+        const groups = Store.getGroupedReminders();
+        const totalCount = groups.today.length + groups.tomorrow.length + groups.week.length + groups.fortnight.length;
         const monthCost = monthRecords.reduce((s, r) => s + (r.cost || 0), 0);
-        return { monthCount: monthRecords.length, reminderCount: reminders.length, monthCost };
+        return { monthCount: monthRecords.length, reminderCount: totalCount, todayCount: groups.today.length, tomorrowCount: groups.tomorrow.length, weekCount: groups.week.length, fortnightCount: groups.fortnight.length, monthCost };
     }
 
     function typeTag(type) {
@@ -70,10 +71,24 @@ const Medical = (() => {
                 </div>
             </div>
             <div class="stat-card">
+                <div class="stat-icon red">🔴</div>
+                <div class="stat-info">
+                    <div class="stat-value">${stats.todayCount}</div>
+                    <div class="stat-label">今天到期</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">🟠</div>
+                <div class="stat-info">
+                    <div class="stat-value">${stats.tomorrowCount}</div>
+                    <div class="stat-label">明天到期</div>
+                </div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-icon orange">🔔</div>
                 <div class="stat-info">
                     <div class="stat-value">${stats.reminderCount}</div>
-                    <div class="stat-label">近期提醒（14天内）</div>
+                    <div class="stat-label">14天内提醒</div>
                 </div>
             </div>
             <div class="stat-card">
@@ -147,20 +162,43 @@ const Medical = (() => {
             <button class="btn btn-primary btn-sm" data-action="add-weight" data-animal-id="${animalId}" style="margin-top:8px">记录体重</button>`;
     }
 
+    function renderReminderGroup(title, items, color) {
+        if (!items.length) return '';
+        const html = items.map(r => {
+            return `<div class="timeline-item" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+                <div style="flex:1">
+                    <div class="timeline-date">${r.nextDate}</div>
+                    <div class="timeline-content">
+                        <strong>${r.animalName}</strong> - ${typeMap[r.type] || '医疗提醒'}
+                        ${r.description ? '（' + r.description + '）' : ''}
+                        <button class="btn btn-sm btn-outline" data-action="goto-medical" data-id="${r.id}" style="margin-left:4px;padding:2px 6px;font-size:11px">查看记录</button>
+                    </div>
+                </div>
+                <div style="flex-shrink:0;display:flex;gap:4px;align-items:center">
+                    <button class="btn btn-sm btn-secondary" data-action="complete-reminder" data-id="${r.id}" style="padding:2px 6px;font-size:11px">已完成</button>
+                    <button class="btn btn-sm btn-warning" data-action="reschedule-reminder" data-id="${r.id}" style="padding:2px 6px;font-size:11px">改日期</button>
+                </div>
+            </div>`;
+        }).join('');
+        return `<div style="margin-bottom:12px">
+            <div style="font-size:13px;font-weight:700;color:${color};margin-bottom:6px">${title}（${items.length}条）</div>
+            <div class="timeline">${html}</div>
+        </div>`;
+    }
+
     function renderReminders() {
-        const reminders = Store.getUpcomingReminders(14);
-        if (!reminders.length) {
+        const groups = Store.getGroupedReminders();
+        const total = groups.today.length + groups.tomorrow.length + groups.week.length + groups.fortnight.length;
+        if (!total) {
             return `<div class="section-divider">近期提醒</div>
                 <div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-text">暂无近期提醒</div></div>`;
         }
-        const items = reminders.map(r => {
-            return `<div class="timeline-item">
-                <div class="timeline-date">${r.nextDate}</div>
-                <div class="timeline-content"><strong>${r.animalName}</strong> - ${r.description || typeMap[r.type] || '医疗提醒'}</div>
-            </div>`;
-        }).join('');
-        return `<div class="section-divider">近期提醒</div>
-            <div class="timeline">${items}</div>`;
+        let html = `<div class="section-divider">近期提醒</div>`;
+        html += renderReminderGroup('今天到期', groups.today, '#D9534F');
+        html += renderReminderGroup('明天到期', groups.tomorrow, '#F0AD4E');
+        html += renderReminderGroup('7天内到期', groups.week, '#5BC0DE');
+        html += renderReminderGroup('14天内到期', groups.fortnight, '#5CB85C');
+        return html;
     }
 
     function render() {
@@ -439,6 +477,63 @@ const Medical = (() => {
         render();
     }
 
+    function showRescheduleModal(medicalId) {
+        const record = Store.getAllMedical().find(r => r.id === medicalId);
+        if (!record) return;
+        const overlay = document.getElementById('modalOverlay');
+        const container = document.getElementById('modalContainer');
+        container.className = 'modal-container';
+        container.innerHTML = `
+            <div class="modal-header">
+                <h3 class="modal-title">修改下次日期</h3>
+                <button class="modal-close" id="mc-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>当前下次日期</label>
+                        <input type="date" value="${record.nextDate || ''}" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>新下次日期</label>
+                        <input type="date" id="mc-reschedule-date" value="${record.nextDate || ''}">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" id="mc-modal-cancel">取消</button>
+                <button class="btn btn-primary" id="mc-reschedule-save" data-id="${medicalId}">保存</button>
+            </div>`;
+        overlay.classList.add('active');
+    }
+
+    function saveReschedule() {
+        const btn = document.getElementById('mc-reschedule-save');
+        if (!btn) return;
+        const medicalId = btn.dataset.id;
+        const newDate = document.getElementById('mc-reschedule-date').value;
+        if (!newDate) return;
+        Store.rescheduleReminder(medicalId, newDate);
+        closeModal();
+        render();
+        if (typeof App !== 'undefined') App.refresh();
+    }
+
+    function handleCompleteReminder(medicalId) {
+        if (!confirm('确认标记此提醒为已完成？')) return;
+        Store.completeReminder(medicalId);
+        render();
+        if (typeof App !== 'undefined') App.refresh();
+    }
+
+    function handleGotoMedical(medicalId) {
+        const record = Store.getAllMedical().find(r => r.id === medicalId);
+        if (!record) return;
+        state.filterAnimal = record.animalId;
+        state.filterType = '';
+        showFormModal(medicalId);
+    }
+
     function init() {
         const panel = document.getElementById('module-medical');
         if (!panel) return;
@@ -455,6 +550,9 @@ const Medical = (() => {
                 if (action === 'edit') showFormModal(id);
                 if (action === 'delete') deleteRecord(id);
                 if (action === 'add-weight') showWeightModal(actionBtn.dataset.animalId);
+                if (action === 'complete-reminder') handleCompleteReminder(id);
+                if (action === 'reschedule-reminder') showRescheduleModal(id);
+                if (action === 'goto-medical') handleGotoMedical(id);
                 return;
             }
         });
@@ -484,6 +582,10 @@ const Medical = (() => {
             }
             if (e.target.id === 'mc-fw-save') {
                 saveWeight();
+                return;
+            }
+            if (e.target.id === 'mc-reschedule-save') {
+                saveReschedule();
                 return;
             }
             if (e.target === overlay) {

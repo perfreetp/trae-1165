@@ -87,30 +87,41 @@ const App = (() => {
     }
 
     function renderReminders(container) {
-        const reminders = Store.getUpcomingReminders(14);
+        const groups = Store.getGroupedReminders();
         const typeMap = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
-        let html = '<div class="reminder-header">用药/复诊提醒（14天内）</div><div class="reminder-list">';
-        if (reminders.length === 0) {
+        const total = groups.today.length + groups.tomorrow.length + groups.week.length + groups.fortnight.length;
+        let html = '<div class="reminder-header">用药/复诊提醒</div><div class="reminder-list">';
+        if (total === 0) {
             html += '<div class="reminder-item" style="color:#999;">暂无提醒</div>';
         } else {
-            reminders.forEach(r => {
-                html += `<div class="reminder-item">
-                    <div class="ri-animal">${r.animalName} - ${typeMap[r.type] || r.type}</div>
-                    <div>${r.description || ''}</div>
-                    <div class="ri-date">下次日期：${r.nextDate}</div>
-                </div>`;
-            });
+            const renderGroup = (title, items, color) => {
+                if (!items.length) return '';
+                let g = `<div style="padding:6px 16px 2px;font-size:12px;font-weight:700;color:${color}">${title}（${items.length}）</div>`;
+                items.forEach(r => {
+                    g += `<div class="reminder-item">
+                        <div class="ri-animal">${r.animalName} - ${typeMap[r.type] || r.type}</div>
+                        <div>${r.description || ''}</div>
+                        <div class="ri-date">到期：${r.nextDate}</div>
+                    </div>`;
+                });
+                return g;
+            };
+            html += renderGroup('今天到期', groups.today, '#D9534F');
+            html += renderGroup('明天到期', groups.tomorrow, '#F0AD4E');
+            html += renderGroup('7天内', groups.week, '#5BC0DE');
+            html += renderGroup('14天内', groups.fortnight, '#5CB85C');
         }
         html += '</div>';
         container.innerHTML = html;
     }
 
     function updateReminderBadge() {
-        const reminders = Store.getUpcomingReminders(7);
+        const groups = Store.getGroupedReminders();
+        const count = groups.today.length + groups.tomorrow.length + groups.week.length + groups.fortnight.length;
         const badge = document.getElementById('reminderBadge');
-        if (reminders.length > 0) {
+        if (count > 0) {
             badge.style.display = 'flex';
-            badge.textContent = reminders.length;
+            badge.textContent = count;
         } else {
             badge.style.display = 'none';
         }

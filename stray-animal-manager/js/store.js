@@ -133,7 +133,24 @@ const Store = (() => {
         const animals = load(KEYS.animals);
         ids.forEach(id => {
             const idx = animals.findIndex(a => a.id === id);
-            if (idx !== -1) animals[idx].status = status;
+            if (idx !== -1) {
+                animals[idx].status = status;
+                if (status === 'available') {
+                    animals[idx].isolationStatus = {
+                        isInIsolation: false,
+                        startDate: animals[idx].isolationStatus?.startDate || '',
+                        endDate: new Date().toISOString().split('T')[0],
+                        reason: animals[idx].isolationStatus?.reason || ''
+                    };
+                } else if (status === 'isolated') {
+                    animals[idx].isolationStatus = {
+                        isInIsolation: true,
+                        startDate: animals[idx].isolationStatus?.startDate || new Date().toISOString().split('T')[0],
+                        endDate: '',
+                        reason: animals[idx].isolationStatus?.reason || '重新隔离观察'
+                    };
+                }
+            }
         });
         save(KEYS.animals, animals);
     }
@@ -165,6 +182,7 @@ const Store = (() => {
             medicine: data.medicine || '',
             dosage: data.dosage || '',
             notes: data.notes || '',
+            reminderCompleted: false,
             createdAt: new Date().toISOString()
         };
         records.push(record);
@@ -201,12 +219,62 @@ const Store = (() => {
         future.setHours(23, 59, 59, 999);
         return records.filter(r => {
             if (!r.nextDate) return false;
+            if (r.reminderCompleted) return false;
             const d = new Date(r.nextDate + 'T00:00:00');
             return d >= today && d <= future;
         }).map(r => {
             const animal = getAnimal(r.animalId);
             return { ...r, animalName: animal ? animal.name : '未知' };
         });
+    }
+
+    function getGroupedReminders() {
+        const records = load(KEYS.medical);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today.getTime() + 86400000);
+        const day7 = new Date(today.getTime() + 7 * 86400000);
+        day7.setHours(23, 59, 59, 999);
+        const day14 = new Date(today.getTime() + 14 * 86400000);
+        day14.setHours(23, 59, 59, 999);
+
+        const groups = { today: [], tomorrow: [], week: [], fortnight: [] };
+        records.forEach(r => {
+            if (!r.nextDate || r.reminderCompleted) return;
+            const d = new Date(r.nextDate + 'T00:00:00');
+            if (d < today) return;
+            const animal = getAnimal(r.animalId);
+            const item = { ...r, animalName: animal ? animal.name : '未知' };
+            if (d.getTime() === today.getTime()) {
+                groups.today.push(item);
+            } else if (d.getTime() === tomorrow.getTime()) {
+                groups.tomorrow.push(item);
+            } else if (d <= day7) {
+                groups.week.push(item);
+            } else if (d <= day14) {
+                groups.fortnight.push(item);
+            }
+        });
+        return groups;
+    }
+
+    function completeReminder(medicalId) {
+        const records = load(KEYS.medical);
+        const idx = records.findIndex(r => r.id === medicalId);
+        if (idx === -1) return null;
+        records[idx].reminderCompleted = true;
+        save(KEYS.medical, records);
+        return records[idx];
+    }
+
+    function rescheduleReminder(medicalId, newNextDate) {
+        const records = load(KEYS.medical);
+        const idx = records.findIndex(r => r.id === medicalId);
+        if (idx === -1) return null;
+        records[idx].nextDate = newNextDate;
+        records[idx].reminderCompleted = false;
+        save(KEYS.medical, records);
+        return records[idx];
     }
 
     function createFamily(data) {
@@ -420,6 +488,66 @@ const Store = (() => {
         return load(KEYS.followups);
     }
 
+    function getAnimalTimeline(animalId) {
+        const animal = getAnimal(animalId);
+        if (!animal) return [];
+        const events = [];
+        events.push({
+            date: animal.intakeDate || animal.createdAt,
+            type: 'intake',
+            title: '入站登记',
+            detail: `来源：${animal.sourceDetail || animal.source}，${animal.isolationStatus?.isInIsolation ? '需隔离观察' : '无需隔离'}`,
+            sortDate: animal.intakeDate || ''
+        });
+        (animal.weightHistory || []).forEach(w => {
+            events.push({
+                date: w.date,
+                type: 'weight',
+                title: `体重记录：${w.weight} kg`,
+                detail: '',
+                sortDate: w.date
+            });
+        });
+        load(KEYS.medical).filter(r => r.animalId === animalId).forEach(r => {
+            events.push({
+                date: r.date,
+                type: 'medical',
+                title: `${typeMapBrief[r.type] || r.type} - ${r.description || ''}`,
+                detail: r.vet ? `兽医：${r.vet}` : '',
+                sortDate: r.date,
+                medicalType: r.type
+            });
+        });
+        load(KEYS.placements).filter(p => p.animalId === animalId).forEach(p => {
+            const family = getFamily(p.familyId);
+            const typeLabel = p.type === 'adopt' ? '领养' : '寄养';
+            events.push({
+                date: p.startDate,
+                type: 'placement',
+                title: `${typeLabel}${family ? ' - ' + family.name : ''}`,
+                detail: p.notes || '',
+                sortDate: p.startDate,
+                placementType: p.type
+            });
+        });
+        load(KEYS.followups).filter(f => f.animalId === animalId).forEach(f => {
+            const family = f.familyId ? getFamily(f.familyId) : null;
+            const typeLabels = { post_adopt: '领养回访', post_foster: '寄养回访', lost: '走失', found: '找回', other: '其他' };
+            events.push({
+                date: f.date,
+                type: 'followup',
+                title: `${typeLabels[f.type] || f.type}${family ? ' - ' + family.name : ''}`,
+                detail: f.notes || '',
+                sortDate: f.date,
+                followupType: f.type
+            });
+        });
+        events.sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
+        return events;
+    }
+
+    const typeMapBrief = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+
     function getStats() {
         const animals = load(KEYS.animals);
         const expenses = load(KEYS.expenses);
@@ -508,13 +636,13 @@ const Store = (() => {
     return {
         generateId,
         createAnimal, updateAnimal, deleteAnimal, getAnimal, getAllAnimals, searchAnimals, batchUpdateStatus, updateWeight,
-        createMedical, updateMedical, deleteMedical, getMedicalByAnimal, getAllMedical, getUpcomingReminders,
+        createMedical, updateMedical, deleteMedical, getMedicalByAnimal, getAllMedical, getUpcomingReminders, getGroupedReminders, completeReminder, rescheduleReminder,
         createFamily, updateFamily, deleteFamily, getFamily, getAllFamilies, matchAdopters,
         createPlacement, updatePlacement, deletePlacement, getPlacementsByAnimal, getAllPlacements,
         createExpense, updateExpense, deleteExpense, getAllExpenses,
         createInventory, updateInventory, deleteInventory, getAllInventory,
         createFollowup, updateFollowup, deleteFollowup, getFollowupsByAnimal, getAllFollowups,
-        getStats, getMonthlyReport, exportData, importData,
+        getStats, getMonthlyReport, getAnimalTimeline, exportData, importData,
         loadConfig, saveConfig, initDemoData
     };
 })();

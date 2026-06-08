@@ -12,7 +12,8 @@ const AnimalList = (() => {
         currentPage: 1,
         pageSize: 10,
         searchQuery: '',
-        editId: null
+        editId: null,
+        timelineFilter: 'all'
     };
 
     function getFilteredAnimals() {
@@ -153,11 +154,47 @@ const AnimalList = (() => {
             ${renderPager(total)}`;
     }
 
+    function renderTimeline(animalId) {
+        const events = Store.getAnimalTimeline(animalId);
+        const filter = state.timelineFilter;
+        const filtered = filter === 'all' ? events : events.filter(e => e.type === filter);
+        const typeIcons = { intake: '📝', weight: '⚖️', medical: '🏥', placement: '🏠', followup: '📞' };
+        const filterOptions = [
+            { value: 'all', label: '全部' },
+            { value: 'intake', label: '入站' },
+            { value: 'medical', label: '医疗' },
+            { value: 'weight', label: '体重' },
+            { value: 'placement', label: '领养/寄养' },
+            { value: 'followup', label: '回访' }
+        ];
+        const filterBtns = filterOptions.map(f =>
+            `<button class="btn btn-sm ${f.value === filter ? 'btn-primary' : 'btn-outline'}" data-tl-filter="${f.value}">${f.label}</button>`
+        ).join('');
+
+        if (!filtered.length) {
+            return `<div class="section-divider" style="margin-top:20px">档案时间线</div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${filterBtns}</div>
+                <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">暂无${filter === 'all' ? '' : filterOptions.find(f=>f.value===filter)?.label || ''}记录</div></div>`;
+        }
+        const items = filtered.map(e => {
+            const icon = typeIcons[e.type] || '📋';
+            return `<div class="timeline-item">
+                <div class="timeline-date">${e.date || '-'}</div>
+                <div class="timeline-content">${icon} <strong>${e.title}</strong>${e.detail ? ' — ' + e.detail : ''}</div>
+            </div>`;
+        }).join('');
+        return `<div class="section-divider" style="margin-top:20px">档案时间线</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${filterBtns}</div>
+            <div class="timeline">${items}</div>`;
+    }
+
     function showViewModal(id) {
         const animal = Store.getAnimal(id);
         if (!animal) return;
+        state.timelineFilter = 'all';
         const overlay = document.getElementById('modalOverlay');
         const container = document.getElementById('modalContainer');
+        container.className = 'modal-container wide';
         container.innerHTML = `
             <div class="modal-header">
                 <h3 class="modal-title">动物详情 - ${animal.name}</h3>
@@ -177,9 +214,11 @@ const AnimalList = (() => {
                     <div class="detail-item"><div class="detail-label">入站日期</div><div class="detail-value">${animal.intakeDate || '-'}</div></div>
                     <div class="detail-item"><div class="detail-label">状态</div><div class="detail-value">${statusTag(animal.status)}</div></div>
                     <div class="detail-item"><div class="detail-label">当前体重</div><div class="detail-value">${animal.currentWeight ? animal.currentWeight + ' kg' : '-'}</div></div>
+                    <div class="detail-item"><div class="detail-label">隔离状态</div><div class="detail-value">${animal.isolationStatus?.isInIsolation ? '<span class="tag tag-isolated">隔离中</span>' : '<span class="tag tag-available">未隔离</span>'}</div></div>
                     <div class="detail-item"><div class="detail-label">特征</div><div class="detail-value">${animal.characteristics || '-'}</div></div>
                     <div class="detail-item"><div class="detail-label">备注</div><div class="detail-value">${animal.notes || '-'}</div></div>
                 </div>
+                <div id="al-timeline-area" data-animal-id="${id}">${renderTimeline(id)}</div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-outline" id="al-modal-close-btn">关闭</button>
@@ -360,6 +399,16 @@ const AnimalList = (() => {
             }
             if (e.target.id === 'al-modal-save') {
                 saveAnimal();
+                return;
+            }
+            const tlFilterBtn = e.target.closest('[data-tl-filter]');
+            if (tlFilterBtn) {
+                state.timelineFilter = tlFilterBtn.dataset.tlFilter;
+                const tlArea = document.getElementById('al-timeline-area');
+                if (tlArea) {
+                    const animalId = tlArea.dataset.animalId;
+                    if (animalId) tlArea.innerHTML = renderTimeline(animalId);
+                }
                 return;
             }
             if (e.target === overlay) {
