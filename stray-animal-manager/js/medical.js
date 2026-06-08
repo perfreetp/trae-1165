@@ -335,10 +335,11 @@ const Medical = (() => {
             return `<option value="${k}"${sel}>${v}</option>`;
         }).join('');
 
-        const invItems = Store.getAllInventory().filter(i => i.category === 'medicine' && i.quantity > 0);
+        const invItems = Store.getAllInventory().filter(i => i.category === 'medicine');
         const invOptions = invItems.map(i => `<option value="${i.id}">${i.name}（库存：${i.quantity}${i.unit}）</option>`).join('');
         const invSelected = isEdit && record.inventoryId ? record.inventoryId : '';
         const invQtyVal = isEdit && record.inventoryQty ? record.inventoryQty : '';
+        const invDeductedInfo = isEdit && record.inventoryDeducted ? `<span style="color:#e67e22;font-size:12px">已扣减：${record.inventoryName || ''} ×${record.inventoryQty || 0}（编辑时修改物资或数量会自动调整库存）</span>` : (isEdit && record.inventoryName ? `<span style="color:#999;font-size:12px">之前关联：${record.inventoryName} ×${record.inventoryQty || 0}（未扣减）</span>` : '');
         const invDisplay = 'style="display:flex"';
 
         const overlay = document.getElementById('modalOverlay');
@@ -399,6 +400,7 @@ const Medical = (() => {
                             </select>
                             <input type="number" id="mc-f-inv-qty" min="0.1" step="0.1" placeholder="扣减数量" value="${invQtyVal}" style="flex:1">
                         </div>
+                        ${invDeductedInfo ? `<div style="margin-top:4px">${invDeductedInfo}</div>` : ''}
                         <div id="mc-inv-warning" style="color:#e74c3c;font-size:12px;margin-top:4px"></div>
                     </div>
                     <div class="form-group full-width">
@@ -501,36 +503,130 @@ const Medical = (() => {
         const invQty = parseFloat(document.getElementById('mc-f-inv-qty')?.value) || 0;
         const warnEl = document.getElementById('mc-inv-warning');
 
-        if (invId && invQty > 0) {
-            const invItem = Store.getAllInventory().find(i => i.id === invId);
-            if (invItem && invItem.quantity < invQty) {
-                if (warnEl) warnEl.textContent = `库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。仍要保存？`;
-                if (!confirm(`库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。\n是否仍然保存此医疗记录（将不扣减库存）？`)) return;
-                data.inventoryId = invId;
-                data.inventoryQty = invQty;
-                data.inventoryName = invItem.name;
-                data.inventoryDeducted = false;
-            } else {
-                const result = Store.deductInventory(invId, invQty, `医疗记录：${data.description || typeMap[data.type]}`, '');
-                if (result.ok) {
+        if (state.editId) {
+            const oldRecord = Store.getAllMedical().find(r => r.id === state.editId);
+            if (oldRecord && oldRecord.inventoryDeducted && oldRecord.inventoryId) {
+                if (!invId || invQty <= 0) {
+                    Store.returnInventory(oldRecord.inventoryId, oldRecord.inventoryQty, `医疗记录编辑：取消库存关联（${data.description || typeMap[data.type]}）`);
+                    data.inventoryId = '';
+                    data.inventoryQty = 0;
+                    data.inventoryName = '';
+                    data.inventoryDeducted = false;
+                } else if (invId === oldRecord.inventoryId && invQty === oldRecord.inventoryQty) {
+                    data.inventoryId = oldRecord.inventoryId;
+                    data.inventoryQty = oldRecord.inventoryQty;
+                    data.inventoryName = oldRecord.inventoryName;
+                    data.inventoryDeducted = true;
+                } else if (invId === oldRecord.inventoryId) {
+                    const delta = oldRecord.inventoryQty - invQty;
+                    if (delta > 0) {
+                        Store.returnInventory(invId, delta, `医疗记录编辑：扣减数量从${oldRecord.inventoryQty}改为${invQty}`);
+                    } else if (delta < 0) {
+                        const needMore = -delta;
+                        const invItem = Store.getAllInventory().find(i => i.id === invId);
+                        if (invItem && invItem.quantity < needMore) {
+                            if (!confirm(`库存不足：${invItem.name}还需扣${needMore}${invItem.unit}，当前仅${invItem.quantity}${invItem.unit}。\n是否仍然保存（超出部分不扣减）？`)) return;
+                            const actualReturn = Math.min(invItem.quantity, needMore);
+                            if (actualReturn > 0) Store.deductInventory(invId, actualReturn, `医疗记录编辑：扣减数量从${oldRecord.inventoryQty}改为${invQty}`, '');
+                            data.inventoryQty = oldRecord.inventoryQty + actualReturn;
+                        } else {
+                            Store.deductInventory(invId, needMore, `医疗记录编辑：扣减数量从${oldRecord.inventoryQty}改为${invQty}`, '');
+                        }
+                    }
                     data.inventoryId = invId;
                     data.inventoryQty = invQty;
-                    data.inventoryName = result.item.name;
+                    data.inventoryName = oldRecord.inventoryName;
                     data.inventoryDeducted = true;
                 } else {
-                    if (warnEl) warnEl.textContent = result.msg;
-                    if (!confirm(`${result.msg}\n是否仍然保存此医疗记录（将不扣减库存）？`)) return;
-                    data.inventoryId = invId;
-                    data.inventoryQty = invQty;
-                    data.inventoryName = invItem ? invItem.name : '';
+                    Store.returnInventory(oldRecord.inventoryId, oldRecord.inventoryQty, `医疗记录编辑：换物资，退回${oldRecord.inventoryName}×${oldRecord.inventoryQty}`);
+                    const invItem = Store.getAllInventory().find(i => i.id === invId);
+                    if (invItem && invItem.quantity < invQty) {
+                        if (!confirm(`库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。\n是否仍然保存（将不扣减新库存）？`)) return;
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem.name;
+                        data.inventoryDeducted = false;
+                    } else if (invItem) {
+                        Store.deductInventory(invId, invQty, `医疗记录编辑：关联${invItem.name}`, '');
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem.name;
+                        data.inventoryDeducted = true;
+                    } else {
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = '';
+                        data.inventoryDeducted = false;
+                    }
+                }
+            } else if (oldRecord && oldRecord.inventoryName && !oldRecord.inventoryDeducted) {
+                if (invId && invQty > 0) {
+                    const invItem = Store.getAllInventory().find(i => i.id === invId);
+                    if (invItem && invItem.quantity < invQty) {
+                        if (!confirm(`库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。\n是否仍然保存（将不扣减）？`)) return;
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem.name;
+                        data.inventoryDeducted = false;
+                    } else if (invItem) {
+                        Store.deductInventory(invId, invQty, `医疗记录编辑：关联${invItem.name}`, '');
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem.name;
+                        data.inventoryDeducted = true;
+                    }
+                } else {
+                    data.inventoryId = '';
+                    data.inventoryQty = 0;
+                    data.inventoryName = '';
                     data.inventoryDeducted = false;
                 }
+            } else {
+                if (invId && invQty > 0) {
+                    const invItem = Store.getAllInventory().find(i => i.id === invId);
+                    if (invItem && invItem.quantity < invQty) {
+                        if (!confirm(`库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。\n是否仍然保存（将不扣减）？`)) return;
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem.name;
+                        data.inventoryDeducted = false;
+                    } else if (invItem) {
+                        Store.deductInventory(invId, invQty, `医疗记录：${data.description || typeMap[data.type]}`, '');
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem.name;
+                        data.inventoryDeducted = true;
+                    }
+                }
             }
-        }
-
-        if (state.editId) {
             Store.updateMedical(state.editId, data);
         } else {
+            if (invId && invQty > 0) {
+                const invItem = Store.getAllInventory().find(i => i.id === invId);
+                if (invItem && invItem.quantity < invQty) {
+                    if (warnEl) warnEl.textContent = `库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。仍要保存？`;
+                    if (!confirm(`库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。\n是否仍然保存此医疗记录（将不扣减库存）？`)) return;
+                    data.inventoryId = invId;
+                    data.inventoryQty = invQty;
+                    data.inventoryName = invItem.name;
+                    data.inventoryDeducted = false;
+                } else if (invItem) {
+                    const result = Store.deductInventory(invId, invQty, `医疗记录：${data.description || typeMap[data.type]}`, '');
+                    if (result.ok) {
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = result.item.name;
+                        data.inventoryDeducted = true;
+                    } else {
+                        if (warnEl) warnEl.textContent = result.msg;
+                        if (!confirm(`${result.msg}\n是否仍然保存此医疗记录（将不扣减库存）？`)) return;
+                        data.inventoryId = invId;
+                        data.inventoryQty = invQty;
+                        data.inventoryName = invItem ? invItem.name : '';
+                        data.inventoryDeducted = false;
+                    }
+                }
+            }
             Store.createMedical(data);
         }
         closeModal();
@@ -549,7 +645,14 @@ const Medical = (() => {
     }
 
     function deleteRecord(id) {
-        if (!confirm('确定删除此医疗记录？')) return;
+        const record = Store.getAllMedical().find(r => r.id === id);
+        if (!record) { Store.deleteMedical(id); render(); return; }
+        if (record.inventoryDeducted && record.inventoryId && record.inventoryQty > 0) {
+            const returnInv = confirm(`此记录扣减了${record.inventoryName || '库存物资'} ×${record.inventoryQty}。\n是否将库存退回？\n\n点"确定"退回库存，点"取消"不退回直接删除。`);
+            if (returnInv) {
+                Store.returnInventory(record.inventoryId, record.inventoryQty, `医疗记录删除退回：${record.description || typeMap[record.type]}`);
+            }
+        }
         Store.deleteMedical(id);
         render();
     }

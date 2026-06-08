@@ -257,7 +257,7 @@ const Report = (() => {
         const all = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
         const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
         const rows = all.map(r => {
-            const group = groups.today.includes(r) ? '今天到期' : groups.tomorrow.includes(r) ? '明天到期' : groups.week.includes(r) ? '7天内' : '14天内';
+            const group = groups.today.includes(r) ? '今天到期' : groups.tomorrow.includes(r) ? '明天到期' : groups.week.includes(r) ? '7天内' : '8~14天';
             return `<tr>
                 <td>${r.animalName || '未知'}</td>
                 <td>${typeLabels[r.type] || r.type || '-'}</td>
@@ -272,7 +272,8 @@ const Report = (() => {
                 <div class="stat-card"><div class="stat-icon red">🔴</div><div class="stat-info"><div class="stat-value">${tc.today}</div><div class="stat-label">今天到期</div></div></div>
                 <div class="stat-card"><div class="stat-icon orange">🟠</div><div class="stat-info"><div class="stat-value">${tc.tomorrow}</div><div class="stat-label">明天到期</div></div></div>
                 <div class="stat-card"><div class="stat-icon blue">🔵</div><div class="stat-info"><div class="stat-value">${tc.week}</div><div class="stat-label">7天内</div></div></div>
-                <div class="stat-card"><div class="stat-icon green">🟢</div><div class="stat-info"><div class="stat-value">${tc.fortnight}</div><div class="stat-label">14天内</div></div></div>
+                <div class="stat-card"><div class="stat-icon teal">�</div><div class="stat-info"><div class="stat-value">${tc.fortnight}</div><div class="stat-label">8~14天</div></div></div>
+                <div class="stat-card"><div class="stat-icon green">🟢</div><div class="stat-info"><div class="stat-value">${tc.total}</div><div class="stat-label">14天内总计</div></div></div>
             </div>
             <div class="stat-cards" style="margin-bottom:12px">
                 <div class="stat-card"><div class="stat-icon purple">💊</div><div class="stat-info"><div class="stat-value">${tc.medication}</div><div class="stat-label">用药提醒</div></div></div>
@@ -493,8 +494,10 @@ const Report = (() => {
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#F0AD4E">${tc.tomorrow}</td>
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">7天内</td>
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#5BC0DE">${tc.week}</td>
-                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">14天内</td>
-                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#5CB85C">${tc.fortnight}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">8~14天</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#2196F3">${tc.fortnight}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">14天内总计</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#5CB85C">${tc.total}</td>
             </tr>
             <tr>
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">用药提醒</td>
@@ -505,6 +508,7 @@ const Report = (() => {
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold">${tc.deworming}</td>
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">复诊提醒</td>
                 <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold">${tc.checkup}</td>
+                <td colspan="2"></td>
             </tr>
         </table>`;
 
@@ -518,7 +522,7 @@ const Report = (() => {
             </tr></thead><tbody>`;
         if (allReminders.length) {
             allReminders.forEach(r => {
-                const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '14天内';
+                const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '8~14天';
                 html += `<tr>
                     <td style="border:1px solid #ccc;padding:6px 8px">${r.animalName || '未知'}</td>
                     <td style="border:1px solid #ccc;padding:6px 8px">${typeLabels[r.type] || r.type || '-'}</td>
@@ -643,7 +647,8 @@ const Report = (() => {
         csv += `今天到期,${tc.today}\n`;
         csv += `明天到期,${tc.tomorrow}\n`;
         csv += `7天内,${tc.week}\n`;
-        csv += `14天内,${tc.fortnight}\n`;
+        csv += `8~14天,${tc.fortnight}\n`;
+        csv += `14天内总计,${tc.total}\n`;
         csv += `用药提醒,${tc.medication}\n`;
         csv += `疫苗提醒,${tc.vaccination}\n`;
         csv += `驱虫提醒,${tc.deworming}\n`;
@@ -653,7 +658,7 @@ const Report = (() => {
         csv += '动物名称,类型,描述,到期日期,分组\n';
         if (allReminders.length) {
             allReminders.forEach(r => {
-                const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '14天内';
+                const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '8~14天';
                 csv += [escapeCSV(r.animalName || '未知'), escapeCSV(typeLabels[r.type] || r.type), escapeCSV(r.description || ''), escapeCSV(r.nextDate), escapeCSV(group)].join(',') + '\n';
             });
         } else {

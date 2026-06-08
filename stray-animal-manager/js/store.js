@@ -8,6 +8,7 @@ const Store = (() => {
         inventory: 'sam_inventory',
         followups: 'sam_followups',
         stockflow: 'sam_stockflow',
+        stocktakes: 'sam_stocktakes',
         config: 'sam_config'
     };
 
@@ -492,6 +493,111 @@ const Store = (() => {
         return load(KEYS.stockflow).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     }
 
+    function returnInventory(inventoryId, qty, reason) {
+        const items = load(KEYS.inventory);
+        const idx = items.findIndex(i => i.id === inventoryId);
+        if (idx === -1) return { ok: false, msg: '物资不存在' };
+        items[idx].quantity = Math.round((items[idx].quantity + qty) * 1000) / 1000;
+        items[idx].lastUpdated = new Date().toISOString();
+        save(KEYS.inventory, items);
+        createStockflow({
+            inventoryId,
+            inventoryName: items[idx].name,
+            changeType: 'medical_return',
+            quantity: qty,
+            reason: reason || '医疗记录删除退回',
+            afterQty: items[idx].quantity,
+            unit: items[idx].unit
+        });
+        return { ok: true, item: items[idx] };
+    }
+
+    function adjustInventoryDelta(inventoryId, oldQty, newQty, reason) {
+        const delta = newQty - oldQty;
+        if (delta === 0) return { ok: true, item: null };
+        const items = load(KEYS.inventory);
+        const idx = items.findIndex(i => i.id === inventoryId);
+        if (idx === -1) return { ok: false, msg: '物资不存在' };
+        items[idx].quantity = Math.round((items[idx].quantity + delta) * 1000) / 1000;
+        if (items[idx].quantity < 0) items[idx].quantity = 0;
+        items[idx].lastUpdated = new Date().toISOString();
+        save(KEYS.inventory, items);
+        createStockflow({
+            inventoryId,
+            inventoryName: items[idx].name,
+            changeType: 'medical_adjust',
+            quantity: delta,
+            reason: reason || '医疗记录修改调整',
+            afterQty: items[idx].quantity,
+            unit: items[idx].unit
+        });
+        return { ok: true, item: items[idx] };
+    }
+
+    function createStocktake(data) {
+        const stocktakes = load(KEYS.stocktakes);
+        const stocktake = {
+            id: generateId(),
+            month: data.month || '',
+            items: data.items || [],
+            status: data.status || 'draft',
+            createdAt: new Date().toISOString(),
+            confirmedAt: data.confirmedAt || ''
+        };
+        stocktakes.push(stocktake);
+        save(KEYS.stocktakes, stocktakes);
+        return stocktake;
+    }
+
+    function updateStocktake(id, data) {
+        const stocktakes = load(KEYS.stocktakes);
+        const idx = stocktakes.findIndex(s => s.id === id);
+        if (idx === -1) return null;
+        stocktakes[idx] = { ...stocktakes[idx], ...data };
+        save(KEYS.stocktakes, stocktakes);
+        return stocktakes[idx];
+    }
+
+    function deleteStocktake(id) {
+        save(KEYS.stocktakes, load(KEYS.stocktakes).filter(s => s.id !== id));
+    }
+
+    function getAllStocktakes() {
+        return load(KEYS.stocktakes).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    function confirmStocktake(id) {
+        const stocktakes = load(KEYS.stocktakes);
+        const idx = stocktakes.findIndex(s => s.id === id);
+        if (idx === -1) return null;
+        const st = stocktakes[idx];
+        st.status = 'confirmed';
+        st.confirmedAt = new Date().toISOString();
+        st.items.forEach(item => {
+            const diff = item.actualQty - item.bookQty;
+            if (diff !== 0) {
+                const invItems = load(KEYS.inventory);
+                const invIdx = invItems.findIndex(i => i.id === item.inventoryId);
+                if (invIdx !== -1) {
+                    invItems[invIdx].quantity = Math.round(item.actualQty * 1000) / 1000;
+                    invItems[invIdx].lastUpdated = new Date().toISOString();
+                    save(KEYS.inventory, invItems);
+                    createStockflow({
+                        inventoryId: item.inventoryId,
+                        inventoryName: item.inventoryName,
+                        changeType: 'stocktake_adjust',
+                        quantity: diff,
+                        reason: `盘点调整（${st.month}）${item.reason ? '：' + item.reason : ''}`,
+                        afterQty: item.actualQty,
+                        unit: item.unit
+                    });
+                }
+            }
+        });
+        save(KEYS.stocktakes, stocktakes);
+        return stocktakes[idx];
+    }
+
     function getReminderTypeCounts() {
         const groups = getGroupedReminders();
         const all = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
@@ -649,6 +755,7 @@ const Store = (() => {
             inventory: load(KEYS.inventory),
             followups: load(KEYS.followups),
             stockflow: load(KEYS.stockflow),
+            stocktakes: load(KEYS.stocktakes),
             config: loadConfig(),
             exportedAt: new Date().toISOString()
         };
@@ -663,6 +770,7 @@ const Store = (() => {
         if (data.inventory) save(KEYS.inventory, data.inventory);
         if (data.followups) save(KEYS.followups, data.followups);
         if (data.stockflow) save(KEYS.stockflow, data.stockflow);
+        if (data.stocktakes) save(KEYS.stocktakes, data.stocktakes);
         if (data.config) saveConfig(data.config);
     }
 
@@ -703,7 +811,8 @@ const Store = (() => {
         createFamily, updateFamily, deleteFamily, getFamily, getAllFamilies, matchAdopters,
         createPlacement, updatePlacement, deletePlacement, getPlacementsByAnimal, getAllPlacements,
         createExpense, updateExpense, deleteExpense, getAllExpenses,
-        createInventory, updateInventory, deleteInventory, getAllInventory, deductInventory, createStockflow, getAllStockflows, getReminderTypeCounts,
+        createInventory, updateInventory, deleteInventory, getAllInventory, deductInventory, returnInventory, adjustInventoryDelta, createStockflow, getAllStockflows,
+        createStocktake, updateStocktake, deleteStocktake, getAllStocktakes, confirmStocktake, getReminderTypeCounts,
         createFollowup, updateFollowup, deleteFollowup, getFollowupsByAnimal, getAllFollowups,
         getStats, getMonthlyReport, getAnimalTimeline, exportData, importData,
         loadConfig, saveConfig, initDemoData

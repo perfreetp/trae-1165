@@ -29,7 +29,8 @@ const Expense = (() => {
         filterCategory: '',
         flowFilterItem: '',
         flowFilterMonth: '',
-        flowFilterType: ''
+        flowFilterType: '',
+        stocktakeMonth: ''
     };
 
     function getExpenseStats() {
@@ -71,7 +72,8 @@ const Expense = (() => {
         const tabs = [
             { key: 'records', label: '收支记录' },
             { key: 'inventory', label: '物资库存' },
-            { key: 'stockflow', label: '库存流水' }
+            { key: 'stockflow', label: '库存流水' },
+            { key: 'stocktake', label: '月底盘点' }
         ];
         const items = tabs.map(t =>
             `<div class="tab-item${state.activeTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</div>`
@@ -243,7 +245,7 @@ const Expense = (() => {
 
     function renderStockflowTab() {
         const allFlows = Store.getAllStockflows();
-        const changeTypeMap = { manual_add: '入库', manual_adjust: '手动调整', medical_deduct: '医疗扣减' };
+        const changeTypeMap = { manual_add: '入库', manual_adjust: '手动调整', medical_deduct: '医疗扣减', medical_return: '医疗退回', medical_adjust: '医疗调整', stocktake_adjust: '盘点调整' };
         let filtered = allFlows;
         if (state.flowFilterItem) filtered = filtered.filter(f => f.inventoryId === state.flowFilterItem || f.inventoryName === state.flowFilterItem);
         if (state.flowFilterMonth) filtered = filtered.filter(f => f.date && f.date.startsWith(state.flowFilterMonth));
@@ -290,6 +292,46 @@ const Expense = (() => {
             </table></div>`;
     }
 
+    function renderStocktakeTab() {
+        const stocktakes = Store.getAllStocktakes();
+        const invItems = Store.getAllInventory();
+        const month = state.stocktakeMonth || new Date().toISOString().slice(0, 7);
+
+        const existingRows = stocktakes.map(st => {
+            const statusLabel = st.status === 'confirmed' ? '<span class="tag tag-income">已确认</span>' : '<span class="tag tag-expense">草稿</span>';
+            const diffCount = st.items.filter(i => (i.actualQty - i.bookQty) !== 0).length;
+            const actions = st.status === 'draft'
+                ? `<button class="btn btn-sm btn-outline" data-action="edit-stocktake" data-id="${st.id}">编辑</button>
+                   <button class="btn btn-sm btn-primary" data-action="confirm-stocktake" data-id="${st.id}">确认盘点</button>
+                   <button class="btn btn-sm btn-danger" data-action="delete-stocktake" data-id="${st.id}">删除</button>`
+                : `<button class="btn btn-sm btn-secondary" data-action="export-stocktake" data-id="${st.id}">导出CSV</button>`;
+            return `<tr>
+                <td>${st.month}</td>
+                <td>${statusLabel}</td>
+                <td>${st.items.length}</td>
+                <td>${diffCount}</td>
+                <td>${st.confirmedAt ? new Date(st.confirmedAt).toLocaleDateString() : '-'}</td>
+                <td>${actions}</td>
+            </tr>`;
+        }).join('');
+
+        const listHtml = existingRows
+            ? `<div class="table-container"><table>
+                <thead><tr><th>月份</th><th>状态</th><th>物资数</th><th>差异数</th><th>确认时间</th><th>操作</th></tr></thead>
+                <tbody>${existingRows}</tbody>
+            </table></div>`
+            : '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">暂无盘点单</div></div>';
+
+        return `<div class="panel-header">
+                <h2 class="panel-title">月底盘点</h2>
+                <div class="panel-actions">
+                    <input type="month" id="ex-stocktake-month" value="${month}" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:13px">
+                    <button class="btn btn-primary" id="ex-create-stocktake-btn">生成盘点单</button>
+                </div>
+            </div>
+            ${listHtml}`;
+    }
+
     function renderCapacitySection() {
         const config = Store.loadConfig();
         const stats = Store.getStats();
@@ -315,7 +357,7 @@ const Expense = (() => {
     function render() {
         const panel = document.getElementById('module-expense');
         if (!panel) return;
-        const tabContent = state.activeTab === 'records' ? renderRecordsTab() : state.activeTab === 'inventory' ? renderInventoryTab() : renderStockflowTab();
+        const tabContent = state.activeTab === 'records' ? renderRecordsTab() : state.activeTab === 'inventory' ? renderInventoryTab() : state.activeTab === 'stockflow' ? renderStockflowTab() : renderStocktakeTab();
         panel.innerHTML = `
             <div class="panel-header">
                 <h2 class="panel-title">费用物资</h2>
@@ -604,7 +646,7 @@ const Expense = (() => {
 
     function exportStockflowCSV() {
         const allFlows = Store.getAllStockflows();
-        const changeTypeMap = { manual_add: '入库', manual_adjust: '手动调整', medical_deduct: '医疗扣减' };
+        const changeTypeMap = { manual_add: '入库', manual_adjust: '手动调整', medical_deduct: '医疗扣减', medical_return: '医疗退回', medical_adjust: '医疗调整', stocktake_adjust: '盘点调整' };
         let filtered = allFlows;
         if (state.flowFilterItem) filtered = filtered.filter(f => f.inventoryId === state.flowFilterItem || f.inventoryName === state.flowFilterItem);
         if (state.flowFilterMonth) filtered = filtered.filter(f => f.date && f.date.startsWith(state.flowFilterMonth));
@@ -621,6 +663,141 @@ const Expense = (() => {
         const a = document.createElement('a');
         a.href = url;
         a.download = `库存流水_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function createStocktake() {
+        const month = state.stocktakeMonth || new Date().toISOString().slice(0, 7);
+        const existing = Store.getAllStocktakes().find(s => s.month === month && s.status === 'draft');
+        if (existing) {
+            if (!confirm(`${month} 已有草稿盘点单，是否重新生成？`)) return;
+            Store.deleteStocktake(existing.id);
+        }
+        const invItems = Store.getAllInventory();
+        const items = invItems.map(i => ({
+            inventoryId: i.id,
+            inventoryName: i.name,
+            category: i.category,
+            unit: i.unit || '个',
+            bookQty: i.quantity,
+            actualQty: i.quantity,
+            reason: ''
+        }));
+        Store.createStocktake({ month, items, status: 'draft' });
+        render();
+    }
+
+    function showStocktakeEditModal(id) {
+        const st = Store.getAllStocktakes().find(s => s.id === id);
+        if (!st || st.status !== 'draft') return;
+        const overlay = document.getElementById('modalOverlay');
+        const container = document.getElementById('modalContainer');
+        container.className = 'modal-container modal-lg';
+        const catLabel = (c) => invCategoryMap[c] || c;
+        const rows = st.items.map((item, idx) => {
+            const diff = item.actualQty - item.bookQty;
+            const diffColor = diff === 0 ? '#999' : diff > 0 ? '#27ae60' : '#e74c3c';
+            const diffPrefix = diff > 0 ? '+' : '';
+            return `<tr>
+                <td>${item.inventoryName}</td>
+                <td>${catLabel(item.category)}</td>
+                <td>${item.bookQty} ${item.unit}</td>
+                <td><input type="number" class="st-actual-input" data-idx="${idx}" value="${item.actualQty}" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px" step="0.001"></td>
+                <td style="color:${diffColor};font-weight:600">${diffPrefix}${diff} ${item.unit}</td>
+                <td><input type="text" class="st-reason-input" data-idx="${idx}" value="${item.reason || ''}" style="width:120px;padding:4px 6px;border:1px solid #ddd;border-radius:4px" placeholder="差异原因"></td>
+            </tr>`;
+        }).join('');
+        container.innerHTML = `
+            <div class="modal-header">
+                <h3 class="modal-title">编辑盘点单 - ${st.month}</h3>
+                <button class="modal-close" id="ex-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="table-container"><table>
+                    <thead><tr><th>物资名称</th><th>分类</th><th>账面库存</th><th>实盘数量</th><th>差异</th><th>差异原因</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" id="ex-modal-cancel">取消</button>
+                <button class="btn btn-primary" id="ex-stocktake-save">保存盘点</button>
+            </div>`;
+        overlay.classList.add('active');
+        overlay._stocktakeId = id;
+        setTimeout(() => {
+            container.querySelectorAll('.st-actual-input').forEach(input => {
+                input.addEventListener('input', () => {
+                    const idx = parseInt(input.dataset.idx);
+                    const newActual = parseFloat(input.value) || 0;
+                    const bookQty = st.items[idx].bookQty;
+                    const unit = st.items[idx].unit;
+                    const diff = newActual - bookQty;
+                    const row = input.closest('tr');
+                    const diffCell = row.children[4];
+                    const diffColor = diff === 0 ? '#999' : diff > 0 ? '#27ae60' : '#e74c3c';
+                    const diffPrefix = diff > 0 ? '+' : '';
+                    diffCell.style.color = diffColor;
+                    diffCell.style.fontWeight = '600';
+                    diffCell.textContent = `${diffPrefix}${Math.round(diff * 1000) / 1000} ${unit}`;
+                });
+            });
+        }, 0);
+    }
+
+    function saveStocktakeEdit() {
+        const overlay = document.getElementById('modalOverlay');
+        const id = overlay._stocktakeId;
+        const st = Store.getAllStocktakes().find(s => s.id === id);
+        if (!st) return;
+        const container = document.getElementById('modalContainer');
+        container.querySelectorAll('.st-actual-input').forEach(input => {
+            const idx = parseInt(input.dataset.idx);
+            st.items[idx].actualQty = parseFloat(input.value) || 0;
+        });
+        container.querySelectorAll('.st-reason-input').forEach(input => {
+            const idx = parseInt(input.dataset.idx);
+            st.items[idx].reason = input.value.trim();
+        });
+        Store.updateStocktake(id, { items: st.items });
+        closeModal();
+        render();
+    }
+
+    function confirmStocktakeAction(id) {
+        const st = Store.getAllStocktakes().find(s => s.id === id);
+        if (!st || st.status !== 'draft') return;
+        const diffItems = st.items.filter(i => (i.actualQty - i.bookQty) !== 0);
+        if (diffItems.length > 0) {
+            const diffSummary = diffItems.map(i => `${i.inventoryName}：${i.bookQty}→${i.actualQty}（差${i.actualQty > i.bookQty ? '+' : ''}${Math.round((i.actualQty - i.bookQty) * 1000) / 1000}${i.unit}）`).join('\n');
+            if (!confirm(`确认盘点后，以下物资库存将被调整为实盘数量：\n\n${diffSummary}\n\n是否确认？`)) return;
+        } else {
+            if (!confirm('盘点无差异，确认完成？')) return;
+        }
+        Store.confirmStocktake(id);
+        render();
+    }
+
+    function exportStocktakeCSV(id) {
+        const st = Store.getAllStocktakes().find(s => s.id === id);
+        if (!st) return;
+        const catLabel = (c) => invCategoryMap[c] || c;
+        let csv = '\uFEFF';
+        csv += `盘点单 - ${st.month}\n`;
+        csv += `状态：${st.status === 'confirmed' ? '已确认' : '草稿'}\n`;
+        csv += `确认时间：${st.confirmedAt ? new Date(st.confirmedAt).toLocaleString() : '未确认'}\n\n`;
+        csv += '物资名称,分类,单位,账面库存,实盘数量,差异,差异原因\n';
+        st.items.forEach(item => {
+            const diff = item.actualQty - item.bookQty;
+            csv += [escapeCSV(item.inventoryName), escapeCSV(catLabel(item.category)), escapeCSV(item.unit), item.bookQty, item.actualQty, Math.round(diff * 1000) / 1000, escapeCSV(item.reason || '')].join(',') + '\n';
+        });
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `盘点单_${st.month}.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -654,6 +831,10 @@ const Expense = (() => {
                 exportStockflowCSV();
                 return;
             }
+            if (e.target.id === 'ex-create-stocktake-btn') {
+                createStocktake();
+                return;
+            }
             const actionBtn = e.target.closest('[data-action]');
             if (actionBtn) {
                 const action = actionBtn.dataset.action;
@@ -663,6 +844,10 @@ const Expense = (() => {
                 if (action === 'edit-inventory') showInventoryModal(id);
                 if (action === 'delete-inventory') deleteInventory(id);
                 if (action === 'adjust-stock') showStockAdjustModal(id);
+                if (action === 'edit-stocktake') showStocktakeEditModal(id);
+                if (action === 'confirm-stocktake') confirmStocktakeAction(id);
+                if (action === 'delete-stocktake') { if (confirm('确定删除此盘点单？')) { Store.deleteStocktake(id); render(); } }
+                if (action === 'export-stocktake') exportStocktakeCSV(id);
                 return;
             }
         });
@@ -698,6 +883,10 @@ const Expense = (() => {
                 render();
                 return;
             }
+            if (e.target.id === 'ex-stocktake-month') {
+                state.stocktakeMonth = e.target.value;
+                return;
+            }
         });
 
         const overlay = document.getElementById('modalOverlay');
@@ -720,6 +909,10 @@ const Expense = (() => {
             }
             if (e.target.id === 'ex-capacity-save') {
                 saveCapacity();
+                return;
+            }
+            if (e.target.id === 'ex-stocktake-save') {
+                saveStocktakeEdit();
                 return;
             }
             if (e.target === overlay) {

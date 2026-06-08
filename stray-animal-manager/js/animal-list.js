@@ -311,7 +311,7 @@ const AnimalList = (() => {
         }
     }
 
-    function buildAnimalArchive(animalId) {
+    function buildAnimalArchive(animalId, full) {
         const animal = Store.getAnimal(animalId);
         if (!animal) return null;
         const medicals = Store.getMedicalByAnimal(animalId);
@@ -323,7 +323,7 @@ const AnimalList = (() => {
         const groups = Store.getGroupedReminders();
         const allReminders = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
         const hasReminder = allReminders.some(r => r.animalId === animalId);
-        return {
+        const archive = {
             name: animal.name,
             species: speciesMap[animal.species] || animal.species,
             breed: animal.breed || '',
@@ -343,41 +343,162 @@ const AnimalList = (() => {
             latestFollowupDate: latestFollowup ? latestFollowup.date : '',
             has14DayReminder: hasReminder ? '是' : '否'
         };
+        if (full) {
+            archive.medicalHistory = medicals.map(m => ({
+                date: m.date, type: typeMapBrief[m.type] || m.type, description: m.description || '',
+                vet: m.vet || '', cost: m.cost || 0, medicine: m.medicine || '', dosage: m.dosage || '',
+                nextDate: m.nextDate || '', inventoryName: m.inventoryName || '', inventoryQty: m.inventoryQty || 0,
+                inventoryDeducted: m.inventoryDeducted || false
+            }));
+            archive.placementHistory = placements.map(p => ({
+                startDate: p.startDate || '', endDate: p.endDate || '', type: p.type === 'adopt' ? '领养' : '寄养',
+                familyName: p.familyName || ''
+            }));
+            archive.followupHistory = followups.map(f => ({
+                date: f.date || '', type: followupTypeMapBrief[f.type] || f.type,
+                notes: f.notes || '', status: f.status || ''
+            }));
+            const invDeductions = Store.getAllStockflows().filter(f => f.changeType === 'medical_deduct' || f.changeType === 'medical_adjust' || f.changeType === 'medical_return');
+            const relatedDeductions = invDeductions.filter(f => medicals.some(m => (f.reason || '').includes(m.id)));
+            archive.inventoryDeductionSummary = relatedDeductions.map(f => ({
+                date: f.date || '', inventoryName: f.inventoryName || '',
+                changeType: f.changeType === 'medical_deduct' ? '医疗扣减' : f.changeType === 'medical_return' ? '医疗退回' : '医疗调整',
+                quantity: f.quantity, unit: f.unit || '', reason: f.reason || ''
+            }));
+        }
+        return archive;
     }
 
     const typeMapBrief = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+    const followupTypeMapBrief = { post_adopt: '领养回访', post_foster: '寄养回访', lost: '走失', found: '找回', other: '其他' };
 
-    function exportAnimalsCSV(animalIds) {
-        const archives = animalIds.map(id => buildAnimalArchive(id)).filter(Boolean);
+    function escapeCSV(val) {
+        const str = String(val == null ? '' : val);
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) return '"' + str.replace(/"/g, '""') + '"';
+        return str;
+    }
+
+    function showExportModal(animalIds) {
+        const overlay = document.getElementById('modalOverlay');
+        const container = document.getElementById('modalContainer');
+        container.className = 'modal-container';
+        container.innerHTML = `
+            <div class="modal-header">
+                <h3 class="modal-title">导出动物档案包</h3>
+                <button class="modal-close" id="al-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>已选择 <strong>${animalIds.length}</strong> 只动物</p>
+                <div class="form-grid" style="margin-top:12px">
+                    <div class="form-group">
+                        <label>导出版本</label>
+                        <select id="al-export-version">
+                            <option value="brief">精简版（基本资料+最近医疗/寄养/回访/提醒）</option>
+                            <option value="full">完整版（含完整医疗史、领养史、回访史、库存扣减摘要）</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>导出格式</label>
+                        <select id="al-export-format">
+                            <option value="csv">CSV</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" id="al-modal-close-btn">取消</button>
+                <button class="btn btn-primary" id="al-export-confirm">导出</button>
+            </div>`;
+        overlay.classList.add('active');
+        overlay._exportAnimalIds = animalIds;
+    }
+
+    function confirmExport() {
+        const overlay = document.getElementById('modalOverlay');
+        const animalIds = overlay._exportAnimalIds;
+        const version = document.getElementById('al-export-version').value;
+        const format = document.getElementById('al-export-format').value;
+        const full = version === 'full';
+        closeModal();
+        if (format === 'csv') {
+            exportAnimalsCSV(animalIds, full);
+        } else {
+            exportAnimalsJSON(animalIds, full);
+        }
+    }
+
+    function exportAnimalsCSV(animalIds, full) {
+        const archives = animalIds.map(id => buildAnimalArchive(id, full)).filter(Boolean);
         let csv = '\uFEFF';
-        csv += '动物档案导出\n\n';
+        csv += '动物档案导出（' + (full ? '完整版' : '精简版') + '）\n\n';
+        csv += '=== 基本资料 ===\n';
         csv += '名称,物种,品种,性别,年龄,毛色,芯片号,来源,入站日期,状态,当前体重,最近医疗,医疗日期,寄养领养状态,领养日期,最近回访,回访日期,14天内提醒\n';
         archives.forEach(a => {
             const vals = [a.name, a.species, a.breed, a.gender, a.age, a.color, a.chipNumber, a.source, a.intakeDate, a.status, a.currentWeight, a.latestMedical, a.latestMedicalDate, a.placementStatus, a.placementDate, a.latestFollowup, a.latestFollowupDate, a.has14DayReminder];
-            csv += vals.map(v => {
-                const s = String(v == null ? '' : v);
-                if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
-                return s;
-            }).join(',') + '\n';
+            csv += vals.map(v => escapeCSV(v)).join(',') + '\n';
         });
+
+        if (full) {
+            csv += '\n=== 完整医疗史 ===\n';
+            csv += '动物名称,日期,类型,描述,兽医,费用,药品,剂量,下次日期,关联物资,扣减数量,是否扣减\n';
+            archives.forEach(a => {
+                if (a.medicalHistory && a.medicalHistory.length) {
+                    a.medicalHistory.forEach(m => {
+                        csv += [escapeCSV(a.name), escapeCSV(m.date), escapeCSV(m.type), escapeCSV(m.description), escapeCSV(m.vet), m.cost, escapeCSV(m.medicine), escapeCSV(m.dosage), escapeCSV(m.nextDate), escapeCSV(m.inventoryName), m.inventoryQty, m.inventoryDeducted ? '是' : '否'].join(',') + '\n';
+                    });
+                }
+            });
+
+            csv += '\n=== 寄养领养史 ===\n';
+            csv += '动物名称,开始日期,结束日期,类型,家庭名称\n';
+            archives.forEach(a => {
+                if (a.placementHistory && a.placementHistory.length) {
+                    a.placementHistory.forEach(p => {
+                        csv += [escapeCSV(a.name), escapeCSV(p.startDate), escapeCSV(p.endDate), escapeCSV(p.type), escapeCSV(p.familyName)].join(',') + '\n';
+                    });
+                }
+            });
+
+            csv += '\n=== 回访史 ===\n';
+            csv += '动物名称,日期,类型,备注,状态\n';
+            archives.forEach(a => {
+                if (a.followupHistory && a.followupHistory.length) {
+                    a.followupHistory.forEach(f => {
+                        csv += [escapeCSV(a.name), escapeCSV(f.date), escapeCSV(f.type), escapeCSV(f.notes), escapeCSV(f.status)].join(',') + '\n';
+                    });
+                }
+            });
+
+            csv += '\n=== 库存扣减摘要 ===\n';
+            csv += '动物名称,日期,物资名称,操作类型,数量,单位,备注\n';
+            archives.forEach(a => {
+                if (a.inventoryDeductionSummary && a.inventoryDeductionSummary.length) {
+                    a.inventoryDeductionSummary.forEach(d => {
+                        csv += [escapeCSV(a.name), escapeCSV(d.date), escapeCSV(d.inventoryName), escapeCSV(d.changeType), d.quantity, escapeCSV(d.unit), escapeCSV(d.reason)].join(',') + '\n';
+                    });
+                }
+            });
+        }
+
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `动物档案_${new Date().toISOString().split('T')[0]}.csv`;
+        a.download = `动物档案_${full ? '完整版' : '精简版'}_${new Date().toISOString().split('T')[0]}.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
 
-    function exportAnimalsJSON(animalIds) {
-        const archives = animalIds.map(id => buildAnimalArchive(id)).filter(Boolean);
+    function exportAnimalsJSON(animalIds, full) {
+        const archives = animalIds.map(id => buildAnimalArchive(id, full)).filter(Boolean);
         const blob = new Blob([JSON.stringify(archives, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `动物档案_${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `动物档案_${full ? '完整版' : '精简版'}_${new Date().toISOString().split('T')[0]}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -452,13 +573,13 @@ const AnimalList = (() => {
             }
             if (e.target.id === 'al-batch-export-csv') {
                 if (state.selectedIds.size > 0) {
-                    exportAnimalsCSV(Array.from(state.selectedIds));
+                    showExportModal(Array.from(state.selectedIds));
                 }
                 return;
             }
             if (e.target.id === 'al-batch-export-json') {
                 if (state.selectedIds.size > 0) {
-                    exportAnimalsJSON(Array.from(state.selectedIds));
+                    showExportModal(Array.from(state.selectedIds));
                 }
                 return;
             }
@@ -469,7 +590,7 @@ const AnimalList = (() => {
             }
             if (e.target.id === 'al-export-list-btn') {
                 const animals = getFilteredAnimals();
-                exportAnimalsCSV(animals.map(a => a.id));
+                if (animals.length) showExportModal(animals.map(a => a.id));
                 return;
             }
             const pageBtn = e.target.closest('[data-page]');
@@ -492,6 +613,10 @@ const AnimalList = (() => {
             }
             if (e.target.id === 'al-modal-save') {
                 saveAnimal();
+                return;
+            }
+            if (e.target.id === 'al-export-confirm') {
+                confirmExport();
                 return;
             }
             const tlFilterBtn = e.target.closest('[data-tl-filter]');
