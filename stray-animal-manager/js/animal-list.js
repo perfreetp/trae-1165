@@ -51,6 +51,7 @@ const AnimalList = (() => {
                 <option value="deceased"${state.status === 'deceased' ? ' selected' : ''}>死亡</option>
             </select>
             <div style="flex:1"></div>
+            <button class="btn btn-sm btn-outline" id="al-export-list-btn">📤 导出列表</button>
             <button class="btn btn-sm${state.viewMode === 'table' ? ' btn-primary' : ' btn-outline'}" data-view="table">📋 表格</button>
             <button class="btn btn-sm${state.viewMode === 'card' ? ' btn-primary' : ' btn-outline'}" data-view="card">🗂️ 卡片</button>
         </div>`;
@@ -115,6 +116,8 @@ const AnimalList = (() => {
             <span>已选择 <strong>${state.selectedIds.size}</strong> 项</span>
             <select id="al-batch-status" style="padding:4px 8px;border-radius:4px;border:none;font-size:13px;">${opts}</select>
             <button class="btn btn-sm" style="background:#fff;color:var(--primary);" id="al-batch-btn">批量更新状态</button>
+            <button class="btn btn-sm" style="background:#fff;color:var(--primary);" id="al-batch-export-csv">📦 导出CSV</button>
+            <button class="btn btn-sm" style="background:#fff;color:var(--primary);" id="al-batch-export-json">📄 导出JSON</button>
             <button class="btn btn-sm" style="background:rgba(255,255,255,0.2);color:#fff;" id="al-batch-cancel">取消选择</button>
         </div>`;
     }
@@ -308,6 +311,79 @@ const AnimalList = (() => {
         }
     }
 
+    function buildAnimalArchive(animalId) {
+        const animal = Store.getAnimal(animalId);
+        if (!animal) return null;
+        const medicals = Store.getMedicalByAnimal(animalId);
+        const latestMedical = medicals.length ? medicals[0] : null;
+        const placements = Store.getPlacementsByAnimal(animalId);
+        const latestPlacement = placements.length ? placements[placements.length - 1] : null;
+        const followups = Store.getFollowupsByAnimal(animalId);
+        const latestFollowup = followups.length ? followups[0] : null;
+        const groups = Store.getGroupedReminders();
+        const allReminders = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
+        const hasReminder = allReminders.some(r => r.animalId === animalId);
+        return {
+            name: animal.name,
+            species: speciesMap[animal.species] || animal.species,
+            breed: animal.breed || '',
+            gender: genderMap[animal.gender] || '',
+            age: animal.age || '',
+            color: animal.color || '',
+            chipNumber: animal.chipNumber || '',
+            source: sourceMap[animal.source] || animal.source,
+            intakeDate: animal.intakeDate || '',
+            status: statusMap[animal.status] || animal.status,
+            currentWeight: animal.currentWeight || '',
+            latestMedical: latestMedical ? `${latestMedical.date} ${(typeMapBrief[latestMedical.type] || latestMedical.type)} ${latestMedical.description || ''}` : '',
+            latestMedicalDate: latestMedical ? latestMedical.date : '',
+            placementStatus: latestPlacement ? (latestPlacement.type === 'adopt' ? '已领养' : '寄养中') : '在站',
+            placementDate: latestPlacement ? latestPlacement.startDate : '',
+            latestFollowup: latestFollowup ? `${latestFollowup.date} ${latestFollowup.notes || ''}` : '',
+            latestFollowupDate: latestFollowup ? latestFollowup.date : '',
+            has14DayReminder: hasReminder ? '是' : '否'
+        };
+    }
+
+    const typeMapBrief = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+
+    function exportAnimalsCSV(animalIds) {
+        const archives = animalIds.map(id => buildAnimalArchive(id)).filter(Boolean);
+        let csv = '\uFEFF';
+        csv += '动物档案导出\n\n';
+        csv += '名称,物种,品种,性别,年龄,毛色,芯片号,来源,入站日期,状态,当前体重,最近医疗,医疗日期,寄养领养状态,领养日期,最近回访,回访日期,14天内提醒\n';
+        archives.forEach(a => {
+            const vals = [a.name, a.species, a.breed, a.gender, a.age, a.color, a.chipNumber, a.source, a.intakeDate, a.status, a.currentWeight, a.latestMedical, a.latestMedicalDate, a.placementStatus, a.placementDate, a.latestFollowup, a.latestFollowupDate, a.has14DayReminder];
+            csv += vals.map(v => {
+                const s = String(v == null ? '' : v);
+                if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+                return s;
+            }).join(',') + '\n';
+        });
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `动物档案_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function exportAnimalsJSON(animalIds) {
+        const archives = animalIds.map(id => buildAnimalArchive(id)).filter(Boolean);
+        const blob = new Blob([JSON.stringify(archives, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `动物档案_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
     function init() {
         const panel = document.getElementById('module-animal-list');
         if (!panel) return;
@@ -374,9 +450,26 @@ const AnimalList = (() => {
                 }
                 return;
             }
+            if (e.target.id === 'al-batch-export-csv') {
+                if (state.selectedIds.size > 0) {
+                    exportAnimalsCSV(Array.from(state.selectedIds));
+                }
+                return;
+            }
+            if (e.target.id === 'al-batch-export-json') {
+                if (state.selectedIds.size > 0) {
+                    exportAnimalsJSON(Array.from(state.selectedIds));
+                }
+                return;
+            }
             if (e.target.id === 'al-batch-cancel') {
                 state.selectedIds.clear();
                 render();
+                return;
+            }
+            if (e.target.id === 'al-export-list-btn') {
+                const animals = getFilteredAnimals();
+                exportAnimalsCSV(animals.map(a => a.id));
                 return;
             }
             const pageBtn = e.target.closest('[data-page]');

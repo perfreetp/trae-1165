@@ -26,7 +26,10 @@ const Expense = (() => {
         editInventoryId: null,
         filterStartMonth: '',
         filterEndMonth: '',
-        filterCategory: ''
+        filterCategory: '',
+        flowFilterItem: '',
+        flowFilterMonth: '',
+        flowFilterType: ''
     };
 
     function getExpenseStats() {
@@ -67,7 +70,8 @@ const Expense = (() => {
     function renderTabs() {
         const tabs = [
             { key: 'records', label: '收支记录' },
-            { key: 'inventory', label: '物资库存' }
+            { key: 'inventory', label: '物资库存' },
+            { key: 'stockflow', label: '库存流水' }
         ];
         const items = tabs.map(t =>
             `<div class="tab-item${state.activeTab === t.key ? ' active' : ''}" data-tab="${t.key}">${t.label}</div>`
@@ -237,6 +241,55 @@ const Expense = (() => {
             ${renderInventoryList()}`;
     }
 
+    function renderStockflowTab() {
+        const allFlows = Store.getAllStockflows();
+        const changeTypeMap = { manual_add: '入库', manual_adjust: '手动调整', medical_deduct: '医疗扣减' };
+        let filtered = allFlows;
+        if (state.flowFilterItem) filtered = filtered.filter(f => f.inventoryId === state.flowFilterItem || f.inventoryName === state.flowFilterItem);
+        if (state.flowFilterMonth) filtered = filtered.filter(f => f.date && f.date.startsWith(state.flowFilterMonth));
+        if (state.flowFilterType) filtered = filtered.filter(f => f.changeType === state.flowFilterType);
+
+        const invItems = Store.getAllInventory();
+        const itemOptions = invItems.map(i => `<option value="${i.id}"${state.flowFilterItem === i.id ? ' selected' : ''}>${i.name}</option>`).join('');
+        const typeOptions = Object.entries(changeTypeMap).map(([k, v]) => `<option value="${k}"${state.flowFilterType === k ? ' selected' : ''}>${v}</option>`).join('');
+
+        const rows = filtered.length ? filtered.map(f => {
+            const typeLabel = changeTypeMap[f.changeType] || f.changeType;
+            const qtyColor = f.quantity >= 0 ? '#27ae60' : '#e74c3c';
+            const qtyPrefix = f.quantity >= 0 ? '+' : '';
+            return `<tr>
+                <td>${f.date || '-'}</td>
+                <td>${f.inventoryName || '-'}</td>
+                <td><span class="tag">${typeLabel}</span></td>
+                <td style="color:${qtyColor};font-weight:700">${qtyPrefix}${f.quantity} ${f.unit || ''}</td>
+                <td>${f.afterQty !== undefined ? f.afterQty : '-'} ${f.unit || ''}</td>
+                <td>${f.reason || '-'}</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="6" style="text-align:center;color:#999">暂无流水记录</td></tr>';
+
+        return `<div class="panel-header">
+                <h2 class="panel-title">库存流水</h2>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary" id="ex-flow-export-btn">📊 导出CSV</button>
+                </div>
+            </div>
+            <div class="filter-bar">
+                <select id="ex-flow-filter-item">
+                    <option value="">全部物资</option>
+                    ${itemOptions}
+                </select>
+                <input type="month" id="ex-flow-filter-month" value="${state.flowFilterMonth}" placeholder="筛选月份">
+                <select id="ex-flow-filter-type">
+                    <option value="">全部类型</option>
+                    ${typeOptions}
+                </select>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th>日期</th><th>物资名称</th><th>操作类型</th><th>数量变化</th><th>变动后库存</th><th>备注</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    }
+
     function renderCapacitySection() {
         const config = Store.loadConfig();
         const stats = Store.getStats();
@@ -262,7 +315,7 @@ const Expense = (() => {
     function render() {
         const panel = document.getElementById('module-expense');
         if (!panel) return;
-        const tabContent = state.activeTab === 'records' ? renderRecordsTab() : renderInventoryTab();
+        const tabContent = state.activeTab === 'records' ? renderRecordsTab() : state.activeTab === 'inventory' ? renderInventoryTab() : renderStockflowTab();
         panel.innerHTML = `
             <div class="panel-header">
                 <h2 class="panel-title">费用物资</h2>
@@ -480,8 +533,18 @@ const Expense = (() => {
         const item = Store.getAllInventory().find(i => i.id === itemId);
         if (!item) return;
         const adjust = parseFloat(document.getElementById('ex-stock-adjust').value) || 0;
+        const reason = document.getElementById('ex-stock-reason').value.trim();
         const newQty = Math.max(0, item.quantity + adjust);
         Store.updateInventory(itemId, { quantity: newQty });
+        Store.createStockflow({
+            inventoryId: itemId,
+            inventoryName: item.name,
+            changeType: adjust > 0 ? 'manual_add' : 'manual_adjust',
+            quantity: adjust,
+            reason: reason || (adjust > 0 ? '手动入库' : '手动调整'),
+            afterQty: newQty,
+            unit: item.unit
+        });
         closeModal();
         render();
     }
@@ -531,6 +594,39 @@ const Expense = (() => {
         state.editInventoryId = null;
     }
 
+    function escapeCSV(val) {
+        const str = String(val == null ? '' : val);
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return '"' + str.replace(/"/g, '""') + '"';
+        }
+        return str;
+    }
+
+    function exportStockflowCSV() {
+        const allFlows = Store.getAllStockflows();
+        const changeTypeMap = { manual_add: '入库', manual_adjust: '手动调整', medical_deduct: '医疗扣减' };
+        let filtered = allFlows;
+        if (state.flowFilterItem) filtered = filtered.filter(f => f.inventoryId === state.flowFilterItem || f.inventoryName === state.flowFilterItem);
+        if (state.flowFilterMonth) filtered = filtered.filter(f => f.date && f.date.startsWith(state.flowFilterMonth));
+        if (state.flowFilterType) filtered = filtered.filter(f => f.changeType === state.flowFilterType);
+
+        let csv = '\uFEFF';
+        csv += '库存流水报表\n\n';
+        csv += '日期,物资名称,操作类型,数量变化,变动后库存,备注\n';
+        filtered.forEach(f => {
+            csv += [escapeCSV(f.date), escapeCSV(f.inventoryName), escapeCSV(changeTypeMap[f.changeType] || f.changeType), f.quantity, f.afterQty !== undefined ? f.afterQty : '', escapeCSV(f.reason)].join(',') + '\n';
+        });
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `库存流水_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
     function init() {
         const panel = document.getElementById('module-expense');
         if (!panel) return;
@@ -552,6 +648,10 @@ const Expense = (() => {
             }
             if (e.target.id === 'ex-edit-capacity-btn') {
                 showCapacityModal();
+                return;
+            }
+            if (e.target.id === 'ex-flow-export-btn') {
+                exportStockflowCSV();
                 return;
             }
             const actionBtn = e.target.closest('[data-action]');
@@ -580,6 +680,21 @@ const Expense = (() => {
             }
             if (e.target.id === 'ex-filter-category') {
                 state.filterCategory = e.target.value;
+                render();
+                return;
+            }
+            if (e.target.id === 'ex-flow-filter-item') {
+                state.flowFilterItem = e.target.value;
+                render();
+                return;
+            }
+            if (e.target.id === 'ex-flow-filter-month') {
+                state.flowFilterMonth = e.target.value;
+                render();
+                return;
+            }
+            if (e.target.id === 'ex-flow-filter-type') {
+                state.flowFilterType = e.target.value;
                 render();
                 return;
             }

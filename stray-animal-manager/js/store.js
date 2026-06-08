@@ -7,6 +7,7 @@ const Store = (() => {
         expenses: 'sam_expenses',
         inventory: 'sam_inventory',
         followups: 'sam_followups',
+        stockflow: 'sam_stockflow',
         config: 'sam_config'
     };
 
@@ -445,6 +446,63 @@ const Store = (() => {
         return load(KEYS.inventory);
     }
 
+    function deductInventory(inventoryId, qty, reason, relatedId) {
+        const items = load(KEYS.inventory);
+        const idx = items.findIndex(i => i.id === inventoryId);
+        if (idx === -1) return { ok: false, msg: '物资不存在' };
+        const item = items[idx];
+        if (item.quantity < qty) return { ok: false, msg: `库存不足：${item.name}当前${item.quantity}${item.unit}，需要${qty}${item.unit}` };
+        items[idx].quantity = Math.round((items[idx].quantity - qty) * 1000) / 1000;
+        items[idx].lastUpdated = new Date().toISOString();
+        save(KEYS.inventory, items);
+        createStockflow({
+            inventoryId,
+            inventoryName: item.name,
+            changeType: 'medical_deduct',
+            quantity: -qty,
+            reason: reason || '医疗扣减',
+            relatedId: relatedId || '',
+            afterQty: items[idx].quantity,
+            unit: item.unit
+        });
+        return { ok: true, item: items[idx] };
+    }
+
+    function createStockflow(data) {
+        const flows = load(KEYS.stockflow);
+        const flow = {
+            id: generateId(),
+            inventoryId: data.inventoryId || '',
+            inventoryName: data.inventoryName || '',
+            changeType: data.changeType || 'manual_add',
+            quantity: data.quantity || 0,
+            reason: data.reason || '',
+            relatedId: data.relatedId || '',
+            afterQty: data.afterQty || 0,
+            unit: data.unit || '个',
+            date: data.date || new Date().toISOString().split('T')[0],
+            createdAt: new Date().toISOString()
+        };
+        flows.push(flow);
+        save(KEYS.stockflow, flows);
+        return flow;
+    }
+
+    function getAllStockflows() {
+        return load(KEYS.stockflow).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    function getReminderTypeCounts() {
+        const groups = getGroupedReminders();
+        const all = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
+        const counts = { medication: 0, vaccination: 0, deworming: 0, checkup: 0, surgery: 0, other: 0 };
+        all.forEach(r => {
+            if (counts[r.type] !== undefined) counts[r.type]++;
+            else counts.other++;
+        });
+        return { ...counts, today: groups.today.length, tomorrow: groups.tomorrow.length, week: groups.week.length, fortnight: groups.fortnight.length, total: all.length };
+    }
+
     function createFollowup(data) {
         const followups = load(KEYS.followups);
         const followup = {
@@ -590,6 +648,7 @@ const Store = (() => {
             expenses: load(KEYS.expenses),
             inventory: load(KEYS.inventory),
             followups: load(KEYS.followups),
+            stockflow: load(KEYS.stockflow),
             config: loadConfig(),
             exportedAt: new Date().toISOString()
         };
@@ -603,6 +662,7 @@ const Store = (() => {
         if (data.expenses) save(KEYS.expenses, data.expenses);
         if (data.inventory) save(KEYS.inventory, data.inventory);
         if (data.followups) save(KEYS.followups, data.followups);
+        if (data.stockflow) save(KEYS.stockflow, data.stockflow);
         if (data.config) saveConfig(data.config);
     }
 
@@ -631,6 +691,9 @@ const Store = (() => {
         createInventory({ name: '狗粮（成犬）', category: 'food', quantity: 50, unit: 'kg', minQuantity: 15 });
         createInventory({ name: '猫砂', category: 'supply', quantity: 30, unit: '袋', minQuantity: 10 });
         createInventory({ name: '驱虫药', category: 'medicine', quantity: 15, unit: '盒', minQuantity: 5 });
+        createInventory({ name: '猫三联疫苗', category: 'medicine', quantity: 8, unit: '支', minQuantity: 3 });
+        createInventory({ name: '犬用疫苗', category: 'medicine', quantity: 6, unit: '支', minQuantity: 2 });
+        createInventory({ name: '消炎药', category: 'medicine', quantity: 10, unit: '盒', minQuantity: 3 });
     }
 
     return {
@@ -640,7 +703,7 @@ const Store = (() => {
         createFamily, updateFamily, deleteFamily, getFamily, getAllFamilies, matchAdopters,
         createPlacement, updatePlacement, deletePlacement, getPlacementsByAnimal, getAllPlacements,
         createExpense, updateExpense, deleteExpense, getAllExpenses,
-        createInventory, updateInventory, deleteInventory, getAllInventory,
+        createInventory, updateInventory, deleteInventory, getAllInventory, deductInventory, createStockflow, getAllStockflows, getReminderTypeCounts,
         createFollowup, updateFollowup, deleteFollowup, getFollowupsByAnimal, getAllFollowups,
         getStats, getMonthlyReport, getAnimalTimeline, exportData, importData,
         loadConfig, saveConfig, initDemoData

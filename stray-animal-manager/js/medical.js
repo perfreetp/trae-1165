@@ -121,13 +121,14 @@ const Medical = (() => {
             const animal = Store.getAnimal(r.animalId);
             const animalName = animal ? animal.name : '未知';
             const medicineInfo = r.medicine ? `${r.medicine}${r.dosage ? ' ' + r.dosage : ''}` : '-';
+            const invInfo = r.inventoryDeducted ? `<br><span style="font-size:11px;color:#e67e22">扣减：${r.inventoryName || ''} ×${r.inventoryQty || 0}</span>` : (r.inventoryName ? `<br><span style="font-size:11px;color:#999">关联：${r.inventoryName} ×${r.inventoryQty || 0}（未扣减）</span>` : '');
             return `<tr>
                 <td>${r.date || '-'}</td>
                 <td>${animalName}</td>
                 <td>${typeTag(r.type)}</td>
                 <td>${r.description || '-'}</td>
                 <td>${r.vet || '-'}</td>
-                <td>${medicineInfo}</td>
+                <td>${medicineInfo}${invInfo}</td>
                 <td>¥${(r.cost || 0).toFixed(2)}</td>
                 <td>${r.nextDate || '-'}</td>
                 <td>
@@ -334,6 +335,12 @@ const Medical = (() => {
             return `<option value="${k}"${sel}>${v}</option>`;
         }).join('');
 
+        const invItems = Store.getAllInventory().filter(i => i.category === 'medicine' && i.quantity > 0);
+        const invOptions = invItems.map(i => `<option value="${i.id}">${i.name}（库存：${i.quantity}${i.unit}）</option>`).join('');
+        const invSelected = isEdit && record.inventoryId ? record.inventoryId : '';
+        const invQtyVal = isEdit && record.inventoryQty ? record.inventoryQty : '';
+        const invDisplay = 'style="display:flex"';
+
         const overlay = document.getElementById('modalOverlay');
         const container = document.getElementById('modalContainer');
         container.className = 'modal-container wide';
@@ -383,6 +390,17 @@ const Medical = (() => {
                         <label>下次日期</label>
                         <input type="date" id="mc-f-next" value="${isEdit ? record.nextDate : ''}">
                     </div>
+                    <div class="form-group full-width" id="mc-inv-group" ${invDisplay}>
+                        <label>关联库存物资（用药/疫苗/驱虫时可选，保存后自动扣库存）</label>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <select id="mc-f-inventory" style="flex:2">
+                                <option value="">不关联库存</option>
+                                ${invOptions}
+                            </select>
+                            <input type="number" id="mc-f-inv-qty" min="0.1" step="0.1" placeholder="扣减数量" value="${invQtyVal}" style="flex:1">
+                        </div>
+                        <div id="mc-inv-warning" style="color:#e74c3c;font-size:12px;margin-top:4px"></div>
+                    </div>
                     <div class="form-group full-width">
                         <label>备注</label>
                         <textarea id="mc-f-notes" placeholder="请输入备注">${isEdit ? record.notes : ''}</textarea>
@@ -394,6 +412,33 @@ const Medical = (() => {
                 <button class="btn btn-primary" id="mc-modal-save">保存</button>
             </div>`;
         overlay.classList.add('active');
+
+        if (invSelected) {
+            setTimeout(() => {
+                const sel = document.getElementById('mc-f-inventory');
+                if (sel) sel.value = invSelected;
+            }, 0);
+        }
+
+        setTimeout(() => {
+            const typeEl = document.getElementById('mc-f-type');
+            const invGroup = document.getElementById('mc-inv-group');
+            if (typeEl && invGroup) {
+                const toggle = () => {
+                    const show = ['medication', 'vaccination', 'deworming'].includes(typeEl.value);
+                    invGroup.style.display = show ? '' : 'none';
+                };
+                typeEl.addEventListener('change', toggle);
+                toggle();
+            }
+            const invSel = document.getElementById('mc-f-inventory');
+            if (invSel) {
+                invSel.addEventListener('change', () => {
+                    const warn = document.getElementById('mc-inv-warning');
+                    if (warn) warn.textContent = '';
+                });
+            }
+        }, 0);
     }
 
     function showWeightModal(animalId) {
@@ -451,6 +496,38 @@ const Medical = (() => {
             nextDate: document.getElementById('mc-f-next').value,
             notes: document.getElementById('mc-f-notes').value.trim()
         };
+
+        const invId = document.getElementById('mc-f-inventory')?.value || '';
+        const invQty = parseFloat(document.getElementById('mc-f-inv-qty')?.value) || 0;
+        const warnEl = document.getElementById('mc-inv-warning');
+
+        if (invId && invQty > 0) {
+            const invItem = Store.getAllInventory().find(i => i.id === invId);
+            if (invItem && invItem.quantity < invQty) {
+                if (warnEl) warnEl.textContent = `库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。仍要保存？`;
+                if (!confirm(`库存不足：${invItem.name}当前${invItem.quantity}${invItem.unit}，需要${invQty}${invItem.unit}。\n是否仍然保存此医疗记录（将不扣减库存）？`)) return;
+                data.inventoryId = invId;
+                data.inventoryQty = invQty;
+                data.inventoryName = invItem.name;
+                data.inventoryDeducted = false;
+            } else {
+                const result = Store.deductInventory(invId, invQty, `医疗记录：${data.description || typeMap[data.type]}`, '');
+                if (result.ok) {
+                    data.inventoryId = invId;
+                    data.inventoryQty = invQty;
+                    data.inventoryName = result.item.name;
+                    data.inventoryDeducted = true;
+                } else {
+                    if (warnEl) warnEl.textContent = result.msg;
+                    if (!confirm(`${result.msg}\n是否仍然保存此医疗记录（将不扣减库存）？`)) return;
+                    data.inventoryId = invId;
+                    data.inventoryQty = invQty;
+                    data.inventoryName = invItem ? invItem.name : '';
+                    data.inventoryDeducted = false;
+                }
+            }
+        }
+
         if (state.editId) {
             Store.updateMedical(state.editId, data);
         } else {

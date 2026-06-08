@@ -77,12 +77,9 @@ const Report = (() => {
         const totalExpense = data.expenses.filter(e => e.type === 'expense').reduce((s, e) => s + (e.amount || 0), 0);
         const balance = totalIncome - totalExpense;
 
-        const groups = Store.getGroupedReminders();
-        const todayCount = groups.today.length;
-        const tomorrowCount = groups.tomorrow.length;
-        const weekCount = groups.week.length;
-        const fortnightCount = groups.fortnight.length;
-        const totalReminders = todayCount + tomorrowCount + weekCount + fortnightCount;
+        const tc = Store.getReminderTypeCounts();
+        const todayCount = tc.today;
+        const totalReminders = tc.total;
 
         return `<div class="stat-cards">
             <div class="stat-card">
@@ -255,9 +252,9 @@ const Report = (() => {
     }
 
     function renderRemindersTable() {
+        const tc = Store.getReminderTypeCounts();
         const groups = Store.getGroupedReminders();
         const all = [...groups.today, ...groups.tomorrow, ...groups.week, ...groups.fortnight];
-        if (!all.length) return '';
         const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
         const rows = all.map(r => {
             const group = groups.today.includes(r) ? '今天到期' : groups.tomorrow.includes(r) ? '明天到期' : groups.week.includes(r) ? '7天内' : '14天内';
@@ -269,16 +266,23 @@ const Report = (() => {
                 <td>${group}</td>
             </tr>`;
         }).join('');
-        return `<div class="section-divider">近期提醒明细（14天内）</div>
+        const emptyRows = !all.length ? '<tr><td colspan="5" style="text-align:center;color:#999">暂无近期提醒</td></tr>' : '';
+        return `<div class="section-divider">近期提醒汇总（14天内）</div>
             <div class="stat-cards" style="margin-bottom:12px">
-                <div class="stat-card"><div class="stat-icon red">🔴</div><div class="stat-info"><div class="stat-value">${groups.today.length}</div><div class="stat-label">今天到期</div></div></div>
-                <div class="stat-card"><div class="stat-icon orange">🟠</div><div class="stat-info"><div class="stat-value">${groups.tomorrow.length}</div><div class="stat-label">明天到期</div></div></div>
-                <div class="stat-card"><div class="stat-icon blue">🔵</div><div class="stat-info"><div class="stat-value">${groups.week.length}</div><div class="stat-label">7天内</div></div></div>
-                <div class="stat-card"><div class="stat-icon green">🟢</div><div class="stat-info"><div class="stat-value">${groups.fortnight.length}</div><div class="stat-label">14天内</div></div></div>
+                <div class="stat-card"><div class="stat-icon red">🔴</div><div class="stat-info"><div class="stat-value">${tc.today}</div><div class="stat-label">今天到期</div></div></div>
+                <div class="stat-card"><div class="stat-icon orange">🟠</div><div class="stat-info"><div class="stat-value">${tc.tomorrow}</div><div class="stat-label">明天到期</div></div></div>
+                <div class="stat-card"><div class="stat-icon blue">🔵</div><div class="stat-info"><div class="stat-value">${tc.week}</div><div class="stat-label">7天内</div></div></div>
+                <div class="stat-card"><div class="stat-icon green">🟢</div><div class="stat-info"><div class="stat-value">${tc.fortnight}</div><div class="stat-label">14天内</div></div></div>
+            </div>
+            <div class="stat-cards" style="margin-bottom:12px">
+                <div class="stat-card"><div class="stat-icon purple">💊</div><div class="stat-info"><div class="stat-value">${tc.medication}</div><div class="stat-label">用药提醒</div></div></div>
+                <div class="stat-card"><div class="stat-icon blue">💉</div><div class="stat-info"><div class="stat-value">${tc.vaccination}</div><div class="stat-label">疫苗提醒</div></div></div>
+                <div class="stat-card"><div class="stat-icon green">🐛</div><div class="stat-info"><div class="stat-value">${tc.deworming}</div><div class="stat-label">驱虫提醒</div></div></div>
+                <div class="stat-card"><div class="stat-icon orange">🩺</div><div class="stat-info"><div class="stat-value">${tc.checkup}</div><div class="stat-label">复诊提醒</div></div></div>
             </div>
             <div class="table-container"><table>
                 <thead><tr><th>动物名称</th><th>类型</th><th>描述</th><th>到期日期</th><th>分组</th></tr></thead>
-                <tbody>${rows}</tbody>
+                <tbody>${rows}${emptyRows}</tbody>
             </table></div>`;
     }
 
@@ -475,19 +479,44 @@ const Report = (() => {
             html += `</tbody></table>`;
         }
 
+        const tc = Store.getReminderTypeCounts();
         const rGroups = Store.getGroupedReminders();
         const allReminders = [...rGroups.today, ...rGroups.tomorrow, ...rGroups.week, ...rGroups.fortnight];
+        const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+
+        html += `<h3 style="font-size:15px;margin:16px 0 8px">近期提醒汇总（14天内）</h3>`;
+        html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
+            <tr>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">今天到期</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#D9534F">${tc.today}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">明天到期</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#F0AD4E">${tc.tomorrow}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">7天内</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#5BC0DE">${tc.week}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">14天内</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold;color:#5CB85C">${tc.fortnight}</td>
+            </tr>
+            <tr>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">用药提醒</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold">${tc.medication}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">疫苗提醒</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold">${tc.vaccination}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">驱虫提醒</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold">${tc.deworming}</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;background:#f5f5f5;font-weight:bold">复诊提醒</td>
+                <td style="border:1px solid #ccc;padding:6px 8px;text-align:center;font-size:16px;font-weight:bold">${tc.checkup}</td>
+            </tr>
+        </table>`;
+
+        html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px">
+            <thead><tr style="background:#f5f5f5">
+                <th style="border:1px solid #ccc;padding:6px 8px">动物名称</th>
+                <th style="border:1px solid #ccc;padding:6px 8px">类型</th>
+                <th style="border:1px solid #ccc;padding:6px 8px">描述</th>
+                <th style="border:1px solid #ccc;padding:6px 8px">到期日期</th>
+                <th style="border:1px solid #ccc;padding:6px 8px">分组</th>
+            </tr></thead><tbody>`;
         if (allReminders.length) {
-            const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
-            html += `<h3 style="font-size:15px;margin:16px 0 8px">近期提醒明细（14天内）</h3>`;
-            html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px">
-                <thead><tr style="background:#f5f5f5">
-                    <th style="border:1px solid #ccc;padding:6px 8px">动物名称</th>
-                    <th style="border:1px solid #ccc;padding:6px 8px">类型</th>
-                    <th style="border:1px solid #ccc;padding:6px 8px">描述</th>
-                    <th style="border:1px solid #ccc;padding:6px 8px">到期日期</th>
-                    <th style="border:1px solid #ccc;padding:6px 8px">分组</th>
-                </tr></thead><tbody>`;
             allReminders.forEach(r => {
                 const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '14天内';
                 html += `<tr>
@@ -498,8 +527,10 @@ const Report = (() => {
                     <td style="border:1px solid #ccc;padding:6px 8px">${group}</td>
                 </tr>`;
             });
-            html += `</tbody></table>`;
+        } else {
+            html += `<tr><td colspan="5" style="border:1px solid #ccc;padding:6px 8px;text-align:center;color:#999">暂无近期提醒</td></tr>`;
         }
+        html += `</tbody></table>`;
 
         html += `</div>`;
         return html;
@@ -602,16 +633,31 @@ const Report = (() => {
             });
         }
 
+        const tc = Store.getReminderTypeCounts();
         const rGroups = Store.getGroupedReminders();
         const allReminders = [...rGroups.today, ...rGroups.tomorrow, ...rGroups.week, ...rGroups.fortnight];
+        const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
+
+        csv += '\n近期提醒汇总（14天内）\n';
+        csv += '项目,数量\n';
+        csv += `今天到期,${tc.today}\n`;
+        csv += `明天到期,${tc.tomorrow}\n`;
+        csv += `7天内,${tc.week}\n`;
+        csv += `14天内,${tc.fortnight}\n`;
+        csv += `用药提醒,${tc.medication}\n`;
+        csv += `疫苗提醒,${tc.vaccination}\n`;
+        csv += `驱虫提醒,${tc.deworming}\n`;
+        csv += `复诊提醒,${tc.checkup}\n`;
+
+        csv += '\n近期提醒明细\n';
+        csv += '动物名称,类型,描述,到期日期,分组\n';
         if (allReminders.length) {
-            const typeLabels = { deworming: '驱虫', vaccination: '疫苗', surgery: '手术', checkup: '体检', medication: '用药', other: '其他' };
-            csv += '\n近期提醒明细（14天内）\n';
-            csv += '动物名称,类型,描述,到期日期,分组\n';
             allReminders.forEach(r => {
                 const group = rGroups.today.includes(r) ? '今天到期' : rGroups.tomorrow.includes(r) ? '明天到期' : rGroups.week.includes(r) ? '7天内' : '14天内';
                 csv += [escapeCSV(r.animalName || '未知'), escapeCSV(typeLabels[r.type] || r.type), escapeCSV(r.description || ''), escapeCSV(r.nextDate), escapeCSV(group)].join(',') + '\n';
             });
+        } else {
+            csv += '(暂无近期提醒),,,,,\n';
         }
 
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
